@@ -12,6 +12,9 @@
         <a href="{{ url_for('create_document', template_id=template.id) }}" class="btn btn-success">
             <i class="fas fa-file-alt"></i> Create Document
         </a>
+        <a href="{{ url_for('fork_template', template_id=template.id) }}" class="btn btn-info">
+            <i class="fas fa-copy"></i> Fork Template
+        </a>
         <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#deleteTemplateModal">
             <i class="fas fa-trash"></i> Delete
         </button>

@@ -12,12 +12,12 @@ import bleach
 from functools import wraps
 import copy
 import datetime
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, desc
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy.orm import joinedload
-from database.models import init_db, get_session, User, Template, InputBox, Document, DocumentInputValue, TemplateAssignment, Notification
+from database.models import init_db, get_session, User, Template, InputBox, Document, DocumentInputValue, TemplateAssignment, Notification, Station, StationUser, StationUserRole, ChatChannel, ChatMessage, ChatChannelType
 
 # Configure application
 app = Flask(__name__, 
@@ -48,6 +48,40 @@ def admin_required(f):
         if not current_user.is_authenticated or not current_user.is_admin:
             flash('You do not have permission to access this page', 'danger')
             return redirect(url_for('dashboard'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# Station master required decorator
+def station_master_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated:
+            flash('You must be logged in to access this page', 'danger')
+            return redirect(url_for('login'))
+        
+        # If user is admin, allow access
+        if current_user.is_admin:
+            return f(*args, **kwargs)
+            
+        # Check if station_id is in the route parameters
+        station_id = kwargs.get('station_id')
+        if not station_id:
+            flash('Station ID is required', 'danger')
+            return redirect(url_for('dashboard'))
+            
+        # Check if user is a station master for this station
+        db_session = get_session(engine)
+        station_user = db_session.query(StationUser).filter(
+            StationUser.station_id == station_id,
+            StationUser.user_id == current_user.id,
+            StationUser.role == StationUserRole.STATION_MASTER.value
+        ).first()
+        db_session.close()
+        
+        if not station_user:
+            flash('You do not have permission to access this page', 'danger')
+            return redirect(url_for('dashboard'))
+            
         return f(*args, **kwargs)
     return decorated_function
 
@@ -339,10 +373,38 @@ def logout():
 def admin_users():
     """Admin user management page"""
     db_session = get_session(engine)
+    
+    # Get all users with their station assignments
     users = db_session.query(User).all()
+    
+    # Get all stations for the dropdown
+    stations = db_session.query(Station).all()
+    
+    # Create a dictionary to store user's stations
+    user_stations = {}
+    
+    # For each user, get their station assignments
+    for user in users:
+        # Query to get stations and roles for this user
+        stations_data = db_session.query(Station, StationUser.role).join(
+            StationUser, Station.id == StationUser.station_id
+        ).filter(
+            StationUser.user_id == user.id
+        ).all()
+        
+        # Store as a list of dictionaries for easier template handling
+        user_stations[user.id] = [
+            {
+                'id': station.id,
+                'name': station.name,
+                'role': role
+            }
+            for station, role in stations_data
+        ]
+    
     db_session.close()
     
-    return render_template('admin_users.html', users=users)
+    return render_template('admin_users.html', users=users, stations=stations, user_stations=user_stations)
 
 @app.route('/admin/users/<int:user_id>/suspend')
 @login_required
@@ -424,8 +486,44 @@ def admin_delete_user(user_id):
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    """User dashboard showing templates and documents"""
+    """User dashboard showing stations, templates and documents"""
     db_session = get_session(engine)
+    
+    # Get user's stations with their roles
+    # Include stations where the user is a direct member
+    user_stations = db_session.query(Station, StationUser.role).join(
+        StationUser, Station.id == StationUser.station_id
+    ).filter(
+        StationUser.user_id == current_user.id
+    ).all()
+
+    # Convert to a list of dictionaries for easier template handling
+    stations = []
+    for station, role in user_stations:
+        stations.append({
+            'id': station.id,
+            'name': station.name,
+            'description': station.description,
+            'role': role,
+            'created_at': station.created_at
+        })
+
+    # Include all stations for admin users
+    if current_user.is_admin:
+        # Get any stations that the admin isn't directly a member of
+        admin_stations = db_session.query(Station).filter(
+            ~Station.id.in_([s['id'] for s in stations])
+        ).all()
+        
+        # Add them to the list with the role 'Admin'
+        for station in admin_stations:
+            stations.append({
+                'id': station.id,
+                'name': station.name,
+                'description': station.description,
+                'role': 'Admin',
+                'created_at': station.created_at
+            })
     
     # Get user's templates
     my_templates = db_session.query(Template).filter_by(creator_id=current_user.id).all()
@@ -441,6 +539,14 @@ def dashboard():
     )
     assigned_templates = assigned_templates_query.all()
     
+    # Get station templates based on user's stations
+    station_templates = db_session.query(Template).options(
+        joinedload(Template.creator),
+        joinedload(Template.station)
+    ).filter(
+        Template.station_id.in_([station['id'] for station in stations])
+    ).all()
+    
     # Get user's documents, eagerly loading the template relationship to prevent DetachedInstanceError
     documents = db_session.query(Document).options(joinedload(Document.template)).filter_by(creator_id=current_user.id).all()
     
@@ -450,35 +556,621 @@ def dashboard():
     db_session.close()
     
     return render_template('dashboard.html', 
+                          stations=stations,
                           my_templates=my_templates, 
                           assigned_templates=assigned_templates,
+                          station_templates=station_templates,
                           documents=documents,
                           users=users)
+
+# Station Management Routes
+@app.route('/admin/stations')
+@login_required
+@admin_required
+def admin_stations():
+    """Admin station management page"""
+    db_session = get_session(engine)
+    
+    # Get all stations with their creators
+    stations = db_session.query(Station).options(joinedload(Station.creator)).all()
+    
+    # Get all users for station assignment
+    users = db_session.query(User).filter(User.is_active == True).all()
+    
+    db_session.close()
+    
+    return render_template('admin_stations.html', stations=stations, users=users)
+
+@app.route('/admin/stations/create', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def create_station():
+    """Create a new station"""
+    if request.method == 'POST':
+        name = request.form.get('name')
+        description = request.form.get('description')
+        
+        if not name:
+            flash('Station name is required', 'danger')
+            return redirect(url_for('admin_stations'))
+        
+        db_session = get_session(engine)
+        
+        # Check if station name already exists
+        existing_station = db_session.query(Station).filter_by(name=name).first()
+        if existing_station:
+            db_session.close()
+            flash('A station with this name already exists', 'danger')
+            return redirect(url_for('admin_stations'))
+        
+        # Create station
+        new_station = Station(
+            name=name,
+            description=description,
+            created_by=current_user.id
+        )
+        
+        db_session.add(new_station)
+        db_session.commit()
+        
+        # Get station ID for redirection
+        station_id = new_station.id
+        
+        db_session.close()
+        
+        flash('Station created successfully', 'success')
+        return redirect(url_for('admin_stations'))
+    
+    return render_template('create_station.html')
+
+@app.route('/admin/stations/<int:station_id>/delete')
+@login_required
+@admin_required
+def delete_station(station_id):
+    """Delete a station"""
+    db_session = get_session(engine)
+    station = db_session.query(Station).get(station_id)
+    
+    if not station:
+        db_session.close()
+        flash('Station not found', 'danger')
+        return redirect(url_for('admin_stations'))
+    
+    # Check if there are templates in this station
+    templates_count = db_session.query(Template).filter_by(station_id=station_id).count()
+    
+    if templates_count > 0:
+        db_session.close()
+        flash(f'Cannot delete station: {templates_count} templates are assigned to it', 'danger')
+        return redirect(url_for('admin_stations'))
+    
+    # Delete all user assignments to this station
+    db_session.query(StationUser).filter_by(station_id=station_id).delete()
+    
+    # Delete the station
+    db_session.delete(station)
+    db_session.commit()
+    db_session.close()
+    
+    flash('Station deleted successfully', 'success')
+    return redirect(url_for('admin_stations'))
+
+@app.route('/admin/stations/<int:station_id>/edit', methods=['GET', 'POST'])
+@login_required
+@admin_required
+def edit_station(station_id):
+    """Edit a station"""
+    db_session = get_session(engine)
+    station = db_session.query(Station).get(station_id)
+    
+    if not station:
+        db_session.close()
+        flash('Station not found', 'danger')
+        return redirect(url_for('admin_stations'))
+    
+    if request.method == 'POST':
+        name = request.form.get('name')
+        description = request.form.get('description')
+        
+        if not name:
+            flash('Station name is required', 'danger')
+            return render_template('edit_station.html', station=station)
+        
+        # Check if the new name conflicts with another station
+        if name != station.name:
+            existing_station = db_session.query(Station).filter_by(name=name).first()
+            if existing_station:
+                flash('A station with this name already exists', 'danger')
+                return render_template('edit_station.html', station=station)
+        
+        # Update station
+        station.name = name
+        station.description = description
+        
+        db_session.commit()
+        db_session.close()
+        
+        flash('Station updated successfully', 'success')
+        return redirect(url_for('admin_stations'))
+    
+    db_session.close()
+    return render_template('edit_station.html', station=station)
+
+@app.route('/admin/stations/<int:station_id>/users')
+@login_required
+@admin_required
+def station_users(station_id):
+    """Manage users in a station"""
+    db_session = get_session(engine)
+    station = db_session.query(Station).get(station_id)
+    
+    if not station:
+        db_session.close()
+        flash('Station not found', 'danger')
+        return redirect(url_for('admin_stations'))
+    
+    # Get all users in this station with their roles
+    station_users = db_session.query(User, StationUser.role).join(
+        StationUser, User.id == StationUser.user_id
+    ).filter(
+        StationUser.station_id == station_id
+    ).all()
+    
+    # Get all active users that are not already in the station
+    # Convert the list of users in the station to a list of user IDs
+    station_user_ids = [user.id for user, _ in station_users]
+    
+    # Get all active users except those already in the station
+    # Fixed bug: Using User.id.notin_() instead of ~User.id.in_() for empty list case
+    if station_user_ids:
+        available_users = db_session.query(User).filter(
+            User.is_active == True,
+            User.id.notin_(station_user_ids)
+        ).all()
+    else:
+        available_users = db_session.query(User).filter(
+            User.is_active == True
+        ).all()
+    
+    print(f"Station users: {len(station_users)}")
+    print(f"Available users: {len(available_users)}")
+    
+    # Store station name before closing session
+    station_name = station.name
+    
+    db_session.close()
+    
+    return render_template('station_users.html', 
+                          station=station, 
+                          station_users=station_users, 
+                          available_users=available_users,
+                          roles=[StationUserRole.STATION_MASTER.value, StationUserRole.STATION_STAFF.value])
+
+@app.route('/admin/stations/<int:station_id>/users/add', methods=['POST'])
+@login_required
+@admin_required
+def add_station_user(station_id):
+    """Add a user to a station"""
+    db_session = get_session(engine)
+    station = db_session.query(Station).get(station_id)
+    
+    if not station:
+        db_session.close()
+        flash('Station not found', 'danger')
+        return redirect(url_for('admin_stations'))
+    
+    user_id = request.form.get('user_id')
+    role = request.form.get('role')
+    
+    if not user_id or not role:
+        db_session.close()
+        flash('User and role are required', 'danger')
+        return redirect(url_for('station_users', station_id=station_id))
+    
+    # Check if the user exists
+    user = db_session.query(User).get(user_id)
+    if not user:
+        db_session.close()
+        flash('User not found', 'danger')
+        return redirect(url_for('station_users', station_id=station_id))
+    
+    # Check if user is already in the station with the same role
+    existing = db_session.query(StationUser).filter_by(
+        station_id=station_id,
+        user_id=user_id,
+        role=role
+    ).first()
+    
+    if existing:
+        db_session.close()
+        flash(f'User is already in this station with role {role}', 'danger')
+        return redirect(url_for('station_users', station_id=station_id))
+    
+    # Check if user is in the station with a different role
+    existing_different_role = db_session.query(StationUser).filter_by(
+        station_id=station_id,
+        user_id=user_id
+    ).first()
+    
+    if existing_different_role:
+        # Update the role instead of creating a new record
+        existing_different_role.role = role
+        db_session.commit()
+        flash(f'User {user.username} role updated to {role}', 'success')
+        
+        # Create notification for the user
+        notification = Notification(
+            user_id=user_id,
+            title="Role Changed in Station",
+            message=f"Your role in the station '{station.name}' has been changed to {role}.",
+            notification_type="station_role_change"
+        )
+        
+        db_session.add(notification)
+        db_session.commit()
+        db_session.close()
+        
+        return redirect(url_for('station_users', station_id=station_id))
+    
+    # Add user to station
+    station_user = StationUser(
+        station_id=station_id,
+        user_id=user_id,
+        role=role
+    )
+    
+    db_session.add(station_user)
+    db_session.commit()
+    
+    # Create notification for the user
+    notification = Notification(
+        user_id=user_id,
+        title="Added to Station",
+        message=f"You have been added to the station '{station.name}' with the role of {role}.",
+        notification_type="station_assignment"
+    )
+    
+    db_session.add(notification)
+    db_session.commit()
+    db_session.close()
+    
+    flash(f'User {user.username} added to station with role {role}', 'success')
+    return redirect(url_for('station_users', station_id=station_id))
+
+@app.route('/admin/stations/<int:station_id>/users/<int:user_id>/remove')
+@login_required
+@admin_required
+def remove_station_user(station_id, user_id):
+    """Remove a user from a station"""
+    db_session = get_session(engine)
+    
+    # Check if the station and user exist
+    station = db_session.query(Station).get(station_id)
+    user = db_session.query(User).get(user_id)
+    
+    if not station or not user:
+        db_session.close()
+        flash('Station or user not found', 'danger')
+        return redirect(url_for('admin_stations'))
+    
+    # Remove the user from the station
+    station_user = db_session.query(StationUser).filter_by(
+        station_id=station_id,
+        user_id=user_id
+    ).first()
+    
+    if station_user:
+        db_session.delete(station_user)
+        
+        # Create notification for the user
+        notification = Notification(
+            user_id=user_id,
+            title="Removed from Station",
+            message=f"You have been removed from the station '{station.name}'.",
+            notification_type="station_removal"
+        )
+        
+        db_session.add(notification)
+        db_session.commit()
+        
+        flash(f'User {user.username} removed from station', 'success')
+    else:
+        flash('User is not in this station', 'danger')
+    
+    db_session.close()
+    return redirect(url_for('station_users', station_id=station_id))
+
+@app.route('/admin/stations/<int:station_id>/users/<int:user_id>/change-role', methods=['POST'])
+@login_required
+@admin_required
+def change_station_user_role(station_id, user_id):
+    """Change a user's role in a station"""
+    db_session = get_session(engine)
+    
+    # Check if the station and user exist
+    station = db_session.query(Station).get(station_id)
+    user = db_session.query(User).get(user_id)
+    
+    if not station or not user:
+        db_session.close()
+        flash('Station or user not found', 'danger')
+        return redirect(url_for('admin_stations'))
+    
+    role = request.form.get('role')
+    if not role:
+        db_session.close()
+        flash('Role is required', 'danger')
+        return redirect(url_for('station_users', station_id=station_id))
+    
+    # Update the user's role
+    station_user = db_session.query(StationUser).filter_by(
+        station_id=station_id,
+        user_id=user_id
+    ).first()
+    
+    if station_user:
+        station_user.role = role
+        
+        # Create notification for the user
+        notification = Notification(
+            user_id=user_id,
+            title="Role Changed in Station",
+            message=f"Your role in the station '{station.name}' has been changed to {role}.",
+            notification_type="station_role_change"
+        )
+        
+        db_session.add(notification)
+        db_session.commit()
+        
+        flash(f'User {user.username} role changed to {role}', 'success')
+    else:
+        flash('User is not in this station', 'danger')
+    
+    db_session.close()
+    return redirect(url_for('station_users', station_id=station_id))
+
+@app.route('/admin/assign-multiple-users', methods=['POST'])
+@login_required
+@admin_required
+def assign_multiple_users_to_station():
+    """Assign multiple users to a station at once"""
+    db_session = get_session(engine)
+    
+    station_id = request.form.get('station_id')
+    role = request.form.get('role')
+    user_ids = request.form.get('user_ids')
+    
+    if not station_id or not role or not user_ids:
+        db_session.close()
+        flash('Station, role and users are required', 'danger')
+        return redirect(url_for('admin_users'))
+    
+    # Check if the station exists
+    station = db_session.query(Station).get(station_id)
+    if not station:
+        db_session.close()
+        flash('Station not found', 'danger')
+        return redirect(url_for('admin_users'))
+    
+    # Store station name before session closes
+    station_name = station.name
+    
+    # Split user_ids by comma
+    user_id_list = user_ids.split(',')
+    assigned_count = 0
+    updated_count = 0
+    
+    for user_id in user_id_list:
+        try:
+            user_id = int(user_id.strip())
+            
+            # Check if user exists
+            user = db_session.query(User).get(user_id)
+            if not user:
+                continue
+            
+            # Check if user is already in the station
+            existing_user = db_session.query(StationUser).filter_by(
+                station_id=station_id,
+                user_id=user_id
+            ).first()
+            
+            if existing_user:
+                # Update role if it's different
+                if existing_user.role != role:
+                    existing_user.role = role
+                    updated_count += 1
+                    
+                    # Create notification for role change
+                    notification = Notification(
+                        user_id=user_id,
+                        title="Role Changed in Station",
+                        message=f"Your role in the station '{station_name}' has been changed to {role}.",
+                        notification_type="station_role_change"
+                    )
+                    db_session.add(notification)
+            else:
+                # Add user to station
+                station_user = StationUser(
+                    station_id=station_id,
+                    user_id=user_id,
+                    role=role
+                )
+                db_session.add(station_user)
+                assigned_count += 1
+                
+                # Create notification for new assignment
+                notification = Notification(
+                    user_id=user_id,
+                    title="Added to Station",
+                    message=f"You have been added to the station '{station_name}' with the role of {role}.",
+                    notification_type="station_assignment"
+                )
+                db_session.add(notification)
+        except Exception as e:
+            print(f"Error processing user {user_id}: {str(e)}")
+            continue
+    
+    db_session.commit()
+    db_session.close()
+    
+    if assigned_count > 0 and updated_count > 0:
+        flash(f'{assigned_count} users added and {updated_count} users updated in station {station_name}', 'success')
+    elif assigned_count > 0:
+        flash(f'{assigned_count} users added to station {station_name}', 'success')
+    elif updated_count > 0:
+        flash(f'{updated_count} users updated in station {station_name}', 'success')
+    else:
+        flash('No users were added or updated', 'warning')
+    
+    return redirect(url_for('admin_users'))
+
+@app.route('/stations/<int:station_id>')
+@login_required
+def view_station(station_id):
+    """View a station and its templates"""
+    db_session = get_session(engine)
+    
+    # Check if the station exists
+    station = db_session.query(Station).get(station_id)
+    
+    if not station:
+        db_session.close()
+        flash('Station not found', 'danger')
+        return redirect(url_for('dashboard'))
+    
+    # Check if the user is in this station
+    station_user = db_session.query(StationUser).filter_by(
+        station_id=station_id,
+        user_id=current_user.id
+    ).first()
+    
+    # Allow access for admins even if they're not in the station
+    if not station_user and not current_user.is_admin:
+        db_session.close()
+        flash('You do not have access to this station', 'danger')
+        return redirect(url_for('dashboard'))
+    
+    # Get the user's role (for admins who might not be in the station)
+    user_role = station_user.role if station_user else "Admin"
+    
+    # Get templates in this station
+    templates = db_session.query(Template).options(
+        joinedload(Template.creator)
+    ).filter(
+        Template.station_id == station_id
+    ).all()
+    
+    # Get all users in this station with their roles
+    station_users = db_session.query(User, StationUser.role).join(
+        StationUser, User.id == StationUser.user_id
+    ).filter(
+        StationUser.station_id == station_id
+    ).all()
+    
+    db_session.close()
+    
+    return render_template('view_station.html', 
+                          station=station, 
+                          user_role=user_role,
+                          templates=templates,
+                          station_users=station_users)
 
 @app.route('/templates/create', methods=['GET', 'POST'])
 @login_required
 def create_template():
     """Create a new template"""
+    db_session = get_session(engine)
+    
+    # Check if a station_id is provided in the query parameters
+    # This indicates creating a template from a specific station view
+    from_station_id = request.args.get('station_id')
+    
+    if from_station_id and not current_user.is_admin:
+        # If creating from a specific station, only allow that station to be selected
+        station = db_session.query(Station).get(from_station_id)
+        if station:
+            # Verify user is station master for this station
+            station_user = db_session.query(StationUser).filter_by(
+                station_id=from_station_id,
+                user_id=current_user.id,
+                role=StationUserRole.STATION_MASTER.value
+            ).first()
+            
+            if station_user:
+                stations = [{
+                    'id': station.id,
+                    'name': station.name
+                }]
+            else:
+                # User is not a station master for this station
+                stations = []
+        else:
+            stations = []
+    else:
+        # Get all stations the user has access to for template creation
+        user_stations = db_session.query(Station, StationUser.role).join(
+            StationUser, Station.id == StationUser.station_id
+        ).filter(
+            StationUser.user_id == current_user.id
+        ).all()
+        
+        # Convert to list of dictionaries and filter for stations where user is master
+        stations = []
+        for station, role in user_stations:
+            # Station masters and admins can create templates in a station
+            if role == StationUserRole.STATION_MASTER.value or current_user.is_admin:
+                stations.append({
+                    'id': station.id,
+                    'name': station.name
+                })
+    
+    db_session.close()
+    
     if request.method == 'POST':
         title = request.form.get('title')
         description = request.form.get('description')
         content = request.form.get('content')
+        station_id = request.form.get('station_id')
         
         if not title or not content:
             flash('Title and content are required', 'danger')
-            return render_template('create_template.html')
+            return render_template('create_template.html', stations=stations)
         
         # Extract input boxes
         input_boxes = extract_input_boxes(content)
         
         db_session = get_session(engine)
         
+        # If station_id is provided, validate it
+        if station_id:
+            # Check if station exists
+            station = db_session.query(Station).get(station_id)
+            if not station:
+                db_session.close()
+                flash('Selected station not found', 'danger')
+                return render_template('create_template.html', stations=stations)
+            
+            # Check if user has permission to create templates in this station
+            if not current_user.is_admin:
+                station_user = db_session.query(StationUser).filter_by(
+                    station_id=station_id,
+                    user_id=current_user.id,
+                    role=StationUserRole.STATION_MASTER.value
+                ).first()
+                
+                if not station_user:
+                    db_session.close()
+                    flash('You do not have permission to create templates in this station', 'danger')
+                    return render_template('create_template.html', stations=stations)
+        
         # Create template
         new_template = Template(
             title=title,
             description=description,
             content=content,
-            creator_id=current_user.id
+            creator_id=current_user.id,
+            station_id=station_id if station_id else None
         )
         
         db_session.add(new_template)
@@ -498,9 +1190,14 @@ def create_template():
         db_session.close()
         
         flash('Template created successfully', 'success')
-        return redirect(url_for('dashboard'))
+        
+        # Redirect to station view if template was created for a station
+        if station_id:
+            return redirect(url_for('view_station', station_id=station_id))
+        else:
+            return redirect(url_for('dashboard'))
     
-    return render_template('create_template.html')
+    return render_template('create_template.html', stations=stations)
 
 @app.route('/templates/<int:template_id>')
 @login_required
@@ -1003,13 +1700,15 @@ def fork_template(template_id):
         flash('Template not found', 'danger')
         return redirect(url_for('dashboard'))
     
-    # Check if user has access to the template (creator or assignee)
+    # Check if user has access to the template (creator, assignee, or station member)
     has_access = False
     
+    # Case 1: User is the creator
     if template.creator_id == current_user.id:
         has_access = True
-    else:
-        # Check if user has been assigned this template
+    
+    # Case 2: User has been assigned this template
+    if not has_access:
         assignment = db_session.query(TemplateAssignment).filter_by(
             template_id=template.id,
             assignee_id=current_user.id
@@ -1017,6 +1716,21 @@ def fork_template(template_id):
         
         if assignment:
             has_access = True
+    
+    # Case 3: User is a member of the template's station (new feature)
+    if not has_access and template.station_id:
+        # Check if user is a member of this station
+        station_user = db_session.query(StationUser).filter_by(
+            station_id=template.station_id,
+            user_id=current_user.id
+        ).first()
+        
+        if station_user:
+            has_access = True
+    
+    # Case 4: User is admin
+    if not has_access and current_user.is_admin:
+        has_access = True
     
     if not has_access:
         db_session.close()
@@ -1228,6 +1942,273 @@ def mark_all_notifications_read():
     db_session.close()
     
     return redirect(url_for('view_notifications'))
+
+# Chat Routes
+@app.route('/chat')
+@login_required
+def chat_dashboard():
+    """Chat dashboard showing available channels"""
+    db_session = get_session(engine)
+    
+    # Get general chat channel
+    general_channel = db_session.query(ChatChannel).filter_by(
+        channel_type=ChatChannelType.GENERAL.value
+    ).first()
+    
+    # Get user's stations for station chats
+    user_stations = []
+    
+    # If user is admin, get all stations
+    if current_user.is_admin:
+        stations = db_session.query(Station).all()
+        for station in stations:
+            user_stations.append({
+                'id': station.id,
+                'name': station.name
+            })
+    else:
+        # Get stations where user is a member
+        stations_query = db_session.query(Station).join(
+            StationUser, Station.id == StationUser.station_id
+        ).filter(
+            StationUser.user_id == current_user.id
+        )
+        
+        for station in stations_query:
+            user_stations.append({
+                'id': station.id,
+                'name': station.name
+            })
+    
+    # Get station chat channels for user's stations
+    station_channels = []
+    for station in user_stations:
+        channel = db_session.query(ChatChannel).filter_by(
+            station_id=station['id'],
+            channel_type=ChatChannelType.STATION.value
+        ).first()
+        
+        if channel:
+            # Get last message time and username for preview
+            last_message = db_session.query(ChatMessage).filter_by(
+                channel_id=channel.id
+            ).order_by(desc(ChatMessage.created_at)).first()
+            
+            last_message_time = last_message.created_at if last_message else None
+            last_message_sender = last_message.sender.username if last_message and not last_message.is_system_message else "System"
+            
+            station_channels.append({
+                'id': channel.id,
+                'name': channel.name,
+                'station_id': station['id'],
+                'station_name': station['name'],
+                'last_message_time': last_message_time,
+                'last_message_sender': last_message_sender
+            })
+    
+    # Get last message for general channel
+    last_general_message = None
+    last_general_sender = None
+    if general_channel:
+        last_message = db_session.query(ChatMessage).filter_by(
+            channel_id=general_channel.id
+        ).order_by(desc(ChatMessage.created_at)).first()
+        
+        if last_message:
+            last_general_message = last_message.created_at
+            last_general_sender = last_message.sender.username if not last_message.is_system_message else "System"
+    
+    db_session.close()
+    
+    return render_template('chat_dashboard.html',
+                          general_channel=general_channel,
+                          station_channels=station_channels,
+                          last_general_message=last_general_message,
+                          last_general_sender=last_general_sender)
+
+@app.route('/chat/channel/<int:channel_id>')
+@login_required
+def view_chat_channel(channel_id):
+    """View a chat channel and its messages"""
+    db_session = get_session(engine)
+    
+    # Get the channel
+    channel = db_session.query(ChatChannel).get(channel_id)
+    
+    if not channel:
+        db_session.close()
+        flash('Chat channel not found', 'danger')
+        return redirect(url_for('chat_dashboard'))
+    
+    # Check permissions for station channels
+    if channel.channel_type == ChatChannelType.STATION.value:
+        # If this is a station channel, check if user is in the station
+        if not current_user.is_admin:
+            station_user = db_session.query(StationUser).filter_by(
+                station_id=channel.station_id,
+                user_id=current_user.id
+            ).first()
+            
+            if not station_user:
+                db_session.close()
+                flash('You do not have access to this chat channel', 'danger')
+                return redirect(url_for('chat_dashboard'))
+    
+    # Get messages for this channel
+    messages = db_session.query(ChatMessage).filter_by(
+        channel_id=channel.id
+    ).order_by(ChatMessage.created_at.desc()).limit(100).all()
+    
+    # Reverse messages to show oldest first
+    messages.reverse()
+    
+    # Get user's available channels for the sidebar
+    general_channel = db_session.query(ChatChannel).filter_by(
+        channel_type=ChatChannelType.GENERAL.value
+    ).first()
+    
+    user_stations = []
+    if current_user.is_admin:
+        # Get all stations for admin
+        stations = db_session.query(Station).all()
+        for station in stations:
+            user_stations.append(station.id)
+    else:
+        # Get user's stations
+        stations = db_session.query(Station).join(
+            StationUser, Station.id == StationUser.station_id
+        ).filter(
+            StationUser.user_id == current_user.id
+        )
+        
+        for station in stations:
+            user_stations.append(station.id)
+    
+    # Get station chat channels for user's stations
+    station_channels = db_session.query(ChatChannel).filter(
+        ChatChannel.station_id.in_(user_stations),
+        ChatChannel.channel_type == ChatChannelType.STATION.value
+    ).all()
+    
+    db_session.close()
+    
+    return render_template('chat_channel.html',
+                          channel=channel,
+                          messages=messages,
+                          general_channel=general_channel,
+                          station_channels=station_channels,
+                          current_channel_id=channel_id)
+
+@app.route('/chat/channel/<int:channel_id>/send', methods=['POST'])
+@login_required
+def send_chat_message(channel_id):
+    """Send a message to a chat channel"""
+    db_session = get_session(engine)
+    
+    # Get the channel
+    channel = db_session.query(ChatChannel).get(channel_id)
+    
+    if not channel:
+        db_session.close()
+        flash('Chat channel not found', 'danger')
+        return redirect(url_for('chat_dashboard'))
+    
+    # Check permissions for station channels
+    if channel.channel_type == ChatChannelType.STATION.value:
+        # If this is a station channel, check if user is in the station
+        if not current_user.is_admin:
+            station_user = db_session.query(StationUser).filter_by(
+                station_id=channel.station_id,
+                user_id=current_user.id
+            ).first()
+            
+            if not station_user:
+                db_session.close()
+                flash('You do not have access to this chat channel', 'danger')
+                return redirect(url_for('chat_dashboard'))
+    
+    # Get message content from form
+    content = request.form.get('message')
+    
+    if not content or content.strip() == '':
+        db_session.close()
+        flash('Message cannot be empty', 'danger')
+        return redirect(url_for('view_chat_channel', channel_id=channel_id))
+    
+    # Create and save the message
+    message = ChatMessage(
+        channel_id=channel.id,
+        sender_id=current_user.id,
+        content=content
+    )
+    
+    db_session.add(message)
+    db_session.commit()
+    db_session.close()
+    
+    return redirect(url_for('view_chat_channel', channel_id=channel_id))
+
+@app.route('/chat/api/messages/<int:channel_id>')
+@login_required
+def get_chat_messages(channel_id):
+    """API to get messages for a channel (for polling updates)"""
+    db_session = get_session(engine)
+    
+    # Get the channel
+    channel = db_session.query(ChatChannel).get(channel_id)
+    
+    if not channel:
+        db_session.close()
+        return jsonify({'error': 'Channel not found'}), 404
+    
+    # Check permissions for station channels
+    if channel.channel_type == ChatChannelType.STATION.value:
+        # If this is a station channel, check if user is in the station
+        if not current_user.is_admin:
+            station_user = db_session.query(StationUser).filter_by(
+                station_id=channel.station_id,
+                user_id=current_user.id
+            ).first()
+            
+            if not station_user:
+                db_session.close()
+                return jsonify({'error': 'Access denied'}), 403
+    
+    # Get timestamp for last message shown (for polling)
+    last_timestamp = request.args.get('last_timestamp')
+    
+    # Query for messages
+    query = db_session.query(ChatMessage).filter(
+        ChatMessage.channel_id == channel.id
+    )
+    
+    # If last_timestamp provided, only get newer messages
+    if last_timestamp:
+        try:
+            last_dt = datetime.datetime.fromisoformat(last_timestamp)
+            query = query.filter(ChatMessage.created_at > last_dt)
+        except ValueError:
+            pass
+    
+    # Get messages ordered by time
+    messages = query.order_by(ChatMessage.created_at).all()
+    
+    # Format messages for JSON response
+    message_list = []
+    for message in messages:
+        message_list.append({
+            'id': message.id,
+            'sender_id': message.sender_id,
+            'sender_name': message.sender.username if not message.is_system_message else "System",
+            'content': message.content,
+            'created_at': message.created_at.isoformat(),
+            'is_system': message.is_system_message,
+            'is_own': message.sender_id == current_user.id
+        })
+    
+    db_session.close()
+    
+    return jsonify({'messages': message_list})
 
 @app.context_processor
 def inject_unread_notifications_count():

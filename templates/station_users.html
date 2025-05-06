@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block title %}Station Users - Template Management System{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h2>Station Users: {{ station.name }}</h2>
+    <div>
+        <a href="{{ url_for('admin_stations') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Stations
+        </a>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <!-- Current users list -->
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h3>Current Users</h3>
+            </div>
+            <div class="card-body">
+                {% if station_users %}
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Email</th>
+                                <th>Role</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for user, role in station_users %}
+                            <tr>
+                                <td>{{ user.username }}</td>
+                                <td>{{ user.email }}</td>
+                                <td>
+                                    <form action="{{ url_for('change_station_user_role', station_id=station.id, user_id=user.id) }}" method="POST" class="d-flex align-items-center gap-2">
+                                        <select class="form-select form-select-sm" name="role">
+                                            {% for r in roles %}
+                                            <option value="{{ r }}" {% if r == role %}selected{% endif %}>{{ r }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        <button type="submit" class="btn btn-sm btn-outline-primary">
+                                            <i class="fas fa-check"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                                <td>
+                                    <a href="{{ url_for('remove_station_user', station_id=station.id, user_id=user.id) }}" 
+                                       class="btn btn-sm btn-danger"
+                                       onclick="return confirmDelete('Are you sure you want to remove this user from the station?');">
+                                        <i class="fas fa-trash"></i> Remove
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p>This station doesn't have any users yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Add new user form -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h3>Add User</h3>
+            </div>
+            <div class="card-body">
+                <form action="{{ url_for('add_station_user', station_id=station.id) }}" method="POST">
+                    <div class="mb-3">
+                        <label for="user_id" class="form-label">Select User</label>
+                        <select class="form-select" id="user_id" name="user_id" required>
+                            <option value="">Select a user to add</option>
+                            {% for user in available_users %}
+                            <option value="{{ user.id }}">{{ user.username }} ({{ user.email }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="role" class="form-label">Role</label>
+                        <select class="form-select" id="role" name="role" required>
+                            {% for role in roles %}
+                            <option value="{{ role }}">{{ role }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Add User to Station</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -23,7 +23,7 @@
             <div class="list-group-item {% if not notification.is_read %}list-group-item-info{% endif %}">
                 <div class="d-flex w-100 justify-content-between">
                     <h5 class="mb-1">{{ notification.title }}</h5>
-                    <small>{{ notification.created_at.strftime('%Y-%m-%d %H:%M') }}</small>
+                    <small>{{ notification.created_at.strftime('%Y-%m-%d %H:%M') if notification.created_at else 'N/A' }}</small>
                 </div>
                 <p class="mb-1">{{ notification.message }}</p>
                 <div class="d-flex justify-content-end mt-2">

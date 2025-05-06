@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Station - Template Management System{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h2>Edit Station</h2>
+    <div>
+        <a href="{{ url_for('admin_stations') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Stations
+        </a>
+    </div>
+</div>
+
+<div class="card mt-4">
+    <div class="card-body">
+        <form action="{{ url_for('edit_station', station_id=station.id) }}" method="POST">
+            <div class="mb-3">
+                <label for="name" class="form-label">Station Name</label>
+                <input type="text" class="form-control" id="name" name="name" value="{{ station.name }}" required>
+            </div>
+            <div class="mb-3">
+                <label for="description" class="form-label">Description</label>
+                <textarea class="form-control" id="description" name="description" rows="3">{{ station.description or '' }}</textarea>
+            </div>
+            <button type="submit" class="btn btn-primary">Update Station</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

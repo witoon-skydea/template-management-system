@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}Station: {{ station.name }} - Template Management System{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h2>Station: {{ station.name }}</h2>
+    <div>
+        <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Dashboard
+        </a>
+        {% if current_user.is_admin %}
+        <a href="{{ url_for('admin_stations') }}" class="btn btn-primary">
+            <i class="fas fa-cog"></i> Station Management
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card mt-4">
+    <div class="card-body">
+        <h5 class="card-title">Description</h5>
+        <p class="card-text">{{ station.description or 'No description available' }}</p>
+        <p class="small text-muted">Your role: {{ user_role }}</p>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <!-- Templates Section -->
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h3 class="mb-0">Templates</h3>
+                {% if user_role == 'station_master' or current_user.is_admin %}
+                <a href="{{ url_for('create_template', station_id=station.id) }}" class="btn btn-primary btn-sm">
+                    <i class="fas fa-plus"></i> Create New Template
+                </a>
+                {% endif %}
+            </div>
+            <div class="card-body">
+                {% if templates %}
+                <div class="list-group">
+                    {% for template in templates %}
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1">{{ template.title }}</h5>
+                            <small>{{ template.created_at.strftime('%Y-%m-%d') if template.created_at else 'N/A' }}</small>
+                        </div>
+                        <p class="mb-1">{{ template.description or 'No description' }}</p>
+                        <p class="mb-1"><small>Created by: {{ template.creator.username }}</small></p>
+                        <div class="mt-2 d-flex flex-wrap gap-2">
+                            <a href="{{ url_for('view_template', template_id=template.id) }}" class="btn btn-sm btn-outline-primary">
+                                <i class="fas fa-eye"></i> View
+                            </a>
+                            {% if user_role == 'station_master' or current_user.is_admin or template.creator_id == current_user.id %}
+                            <a href="{{ url_for('edit_template', template_id=template.id) }}" class="btn btn-sm btn-primary">
+                                <i class="fas fa-edit"></i> Edit
+                            </a>
+                            {% endif %}
+                            <a href="{{ url_for('create_document', template_id=template.id) }}" class="btn btn-sm btn-success">
+                                <i class="fas fa-file-alt"></i> Create Document
+                            </a>
+                            <!-- Fork button for all station members -->
+                            <a href="{{ url_for('fork_template', template_id=template.id) }}" class="btn btn-sm btn-info">
+                                <i class="fas fa-copy"></i> Fork to My Templates
+                            </a>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p>No templates available in this station.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Users Section -->
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h3>Users</h3>
+            </div>
+            <div class="card-body">
+                {% if station_users %}
+                <div class="list-group">
+                    {% for user, role in station_users %}
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h6 class="mb-1">{{ user.username }}</h6>
+                            <span class="badge bg-primary">{{ role }}</span>
+                        </div>
+                        <small>{{ user.email }}</small>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p>No users assigned to this station.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

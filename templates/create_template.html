@@ -34,6 +34,18 @@
                 <textarea class="form-control" id="description" name="description" rows="2"></textarea>
             </div>
             <div class="mb-3">
+                <label for="station_id" class="form-label">Station (Optional)</label>
+                <select class="form-select" id="station_id" name="station_id">
+                    <option value="">Personal Template (No Station)</option>
+                    {% for station in stations %}
+                    <option value="{{ station.id }}">{{ station.name }}</option>
+                    {% endfor %}
+                </select>
+                <div class="form-text">
+                    Assign this template to a station to make it available to all station users.
+                </div>
+            </div>
+            <div class="mb-3">
                 <label for="content" class="form-label">Content</label>
                 <!-- Use a hidden input to store the SimpleMDE content -->
                 <textarea class="form-control" id="content" name="content" rows="10" required></textarea>

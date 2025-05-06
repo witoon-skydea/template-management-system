@@ -35,6 +35,9 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
     }
+    
+    // Handle multi-select users for station assignment
+    initMultiUserSelect();
 });
 
 // Function to confirm delete actions
@@ -65,4 +68,87 @@ function highlightCodeBlocks() {
 // Call highlight function if needed
 if (document.querySelector('pre code')) {
     highlightCodeBlocks();
+}
+
+// Initialize multi-user selection functionality
+function initMultiUserSelect() {
+    const selectAllCheckbox = document.getElementById('selectAllUsers');
+    if (!selectAllCheckbox) return; // Not on the user management page
+    
+    const userCheckboxes = document.querySelectorAll('.user-checkbox');
+    const selectedUsersDiv = document.getElementById('selectedUsers');
+    const selectedCountSpan = document.getElementById('selectedCount');
+    const userIdsInput = document.getElementById('userIdsInput');
+    const assignButton = document.getElementById('assignButton');
+    
+    // Function to update the selected users display
+    function updateSelectedUsers() {
+        const selectedUsers = [];
+        const selectedIds = [];
+        let count = 0;
+        
+        userCheckboxes.forEach(checkbox => {
+            if (checkbox.checked) {
+                count++;
+                const userId = checkbox.value;
+                // Find the username text from the table row
+                const username = checkbox.closest('tr').querySelector('td:nth-child(3)').textContent.trim();
+                
+                selectedUsers.push(username);
+                selectedIds.push(userId);
+            }
+        });
+        
+        if (selectedUsers.length > 0) {
+            selectedUsersDiv.innerHTML = selectedUsers.map(name => 
+                `<span class="badge bg-primary me-1 mb-1">${name}</span>`
+            ).join('');
+            assignButton.disabled = false;
+        } else {
+            selectedUsersDiv.innerHTML = '<p class="text-muted">No users selected</p>';
+            assignButton.disabled = true;
+        }
+        
+        selectedCountSpan.textContent = count;
+        userIdsInput.value = selectedIds.join(',');
+    }
+    
+    // Select all users
+    selectAllCheckbox.addEventListener('change', function() {
+        userCheckboxes.forEach(checkbox => {
+            checkbox.checked = selectAllCheckbox.checked;
+        });
+        updateSelectedUsers();
+    });
+    
+    // Individual user selection
+    userCheckboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            // If any checkbox is unchecked, uncheck "Select All"
+            if (!this.checked && selectAllCheckbox.checked) {
+                selectAllCheckbox.checked = false;
+            }
+            // If all checkboxes are checked, check "Select All"
+            else if (this.checked) {
+                let allChecked = true;
+                userCheckboxes.forEach(cb => {
+                    if (!cb.checked) allChecked = false;
+                });
+                selectAllCheckbox.checked = allChecked;
+            }
+            updateSelectedUsers();
+        });
+    });
+    
+    // Form submission handling
+    const assignForm = document.getElementById('assignUsersForm');
+    if (assignForm) {
+        assignForm.addEventListener('submit', function(e) {
+            if (userIdsInput.value === '') {
+                e.preventDefault();
+                alert('Please select at least one user to assign');
+                return false;
+            }
+        });
+    }
 }

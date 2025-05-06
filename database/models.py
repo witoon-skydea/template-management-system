@@ -1,14 +1,106 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship, sessionmaker
+try:
+    from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, Boolean, create_engine, Table
+    from sqlalchemy.ext.declarative import declarative_base
+    from sqlalchemy.orm import relationship, sessionmaker
+except ImportError:
+    # For debugging purposes, print any import errors
+    import sys
+    import traceback
+    print("Error importing SQLAlchemy modules:")
+    traceback.print_exc()
+    sys.exit(1)
 from flask_login import UserMixin
 import datetime
 import json
 import os
+import enum
 
 Base = declarative_base()
 
+# Define Enums for role types and chat channel types
+class StationUserRole(enum.Enum):
+    STATION_MASTER = 'station_master'
+    STATION_STAFF = 'station_staff'
+
+class ChatChannelType(enum.Enum):
+    GENERAL = 'general'
+    STATION = 'station'
+
+# Station model for organizing templates and users
+class Station(Base):
+    __tablename__ = 'stations'
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), unique=True, nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_by = Column(Integer, ForeignKey('users.id'), nullable=False)
+    
+    # Relationships
+    templates = relationship("Template", back_populates="station")
+    station_users = relationship("StationUser", back_populates="station", cascade="all, delete-orphan")
+    creator = relationship("User", foreign_keys=[created_by])
+    chat_channels = relationship("ChatChannel", back_populates="station", cascade="all, delete-orphan")
+    
+    def __repr__(self):
+        return f"<Station(name='{self.name}')>"
+
+# Association table for users and stations with role
+class StationUser(Base):
+    __tablename__ = 'station_users'
+    
+    id = Column(Integer, primary_key=True)
+    station_id = Column(Integer, ForeignKey('stations.id'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    role = Column(String(20), nullable=False, default=StationUserRole.STATION_STAFF.value)
+    assigned_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    # Relationships
+    station = relationship("Station", back_populates="station_users")
+    user = relationship("User", back_populates="user_stations")
+    
+    def __repr__(self):
+        return f"<StationUser(station_id={self.station_id}, user_id={self.user_id}, role='{self.role}')>"
+
 # Notification model for system messages
+# Chat Channel model for general and station-specific chat
+class ChatChannel(Base):
+    __tablename__ = 'chat_channels'
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)
+    channel_type = Column(String(20), nullable=False)  # 'general' or 'station'
+    station_id = Column(Integer, ForeignKey('stations.id'), nullable=True)  # Only for station channels
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    # Relationships
+    station = relationship("Station", back_populates="chat_channels")
+    messages = relationship("ChatMessage", back_populates="channel", cascade="all, delete-orphan")
+    
+    def __repr__(self):
+        if self.channel_type == ChatChannelType.GENERAL.value:
+            return f"<ChatChannel(name='{self.name}', type='general')>"
+        else:
+            return f"<ChatChannel(name='{self.name}', type='station', station_id={self.station_id})>"
+
+# Chat Message model for storing messages
+class ChatMessage(Base):
+    __tablename__ = 'chat_messages'
+    
+    id = Column(Integer, primary_key=True)
+    channel_id = Column(Integer, ForeignKey('chat_channels.id'), nullable=False)
+    sender_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    is_system_message = Column(Boolean, default=False)
+    
+    # Relationships
+    channel = relationship("ChatChannel", back_populates="messages")
+    sender = relationship("User", back_populates="chat_messages")
+    
+    def __repr__(self):
+        return f"<ChatMessage(id={self.id}, sender_id={self.sender_id})>"
+
 class Notification(Base):
     __tablename__ = 'notifications'
     
@@ -61,6 +153,8 @@ class User(Base, UserMixin):
     documents = relationship("Document", back_populates="creator")
     assigned_templates = relationship("TemplateAssignment", foreign_keys="TemplateAssignment.assignee_id", back_populates="assignee")
     notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
+    user_stations = relationship("StationUser", back_populates="user", cascade="all, delete-orphan")
+    chat_messages = relationship("ChatMessage", back_populates="sender")
     
     def get_id(self):
         return str(self.id)
@@ -90,12 +184,14 @@ class Template(Base):
     modified_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
     parent_id = Column(Integer, ForeignKey('templates.id'), nullable=True)  # For forked templates
     is_fork = Column(Boolean, default=False)  # Flag to identify if this is a forked template
+    station_id = Column(Integer, ForeignKey('stations.id'), nullable=True)  # Station association
     
     # Relationships
     creator = relationship("User", foreign_keys=[creator_id], back_populates="templates")
     input_boxes = relationship("InputBox", back_populates="template", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="template")
     assignments = relationship("TemplateAssignment", back_populates="template", cascade="all, delete-orphan")
+    station = relationship("Station", back_populates="templates")
     
     # Self-referential relationship for forks
     parent = relationship("Template", remote_side=[id], backref="forks", foreign_keys=[parent_id])
@@ -185,6 +281,8 @@ def init_db(db_path):
     engine = create_engine(f'sqlite:///{db_path}')
     Base.metadata.create_all(engine)
     return engine
+
+
 
 
 def get_session(engine):

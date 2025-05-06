@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block title %}Chat - Template Management System{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Chat System</h2>
+    <div>
+        <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Dashboard
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <!-- General Chat Section -->
+    <div class="col-md-6 mb-4">
+        <div class="card h-100">
+            <div class="card-header bg-primary text-white">
+                <h3 class="mb-0">General Chat</h3>
+            </div>
+            <div class="card-body">
+                <p>The general chat is accessible to all users. You can discuss anything related to templates and documents here.</p>
+                
+                {% if general_channel %}
+                <div class="d-flex justify-content-between align-items-center mt-3">
+                    <div>
+                        {% if last_general_message %}
+                        <p class="mb-0"><small>Last message: {{ last_general_message.strftime('%Y-%m-%d %H:%M') }} by {{ last_general_sender }}</small></p>
+                        {% else %}
+                        <p class="text-muted mb-0"><small>No messages yet</small></p>
+                        {% endif %}
+                    </div>
+                    <a href="{{ url_for('view_chat_channel', channel_id=general_channel.id) }}" class="btn btn-primary">
+                        <i class="fas fa-comments"></i> Join Chat
+                    </a>
+                </div>
+                {% else %}
+                <div class="alert alert-warning mt-3">
+                    General chat channel is not available. Please contact the administrator.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <!-- Station Chats Section -->
+    <div class="col-md-6 mb-4">
+        <div class="card h-100">
+            <div class="card-header bg-success text-white">
+                <h3 class="mb-0">Station Chats</h3>
+            </div>
+            <div class="card-body">
+                <p>Station chats are only accessible to members of each station. These are private conversation spaces for station-specific discussions.</p>
+                
+                {% if station_channels %}
+                <div class="list-group mt-3">
+                    {% for channel in station_channels %}
+                    <div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="mb-1">{{ channel.station_name }}</h5>
+                            {% if channel.last_message_time %}
+                            <p class="mb-0"><small>Last message: {{ channel.last_message_time.strftime('%Y-%m-%d %H:%M') }} by {{ channel.last_message_sender }}</small></p>
+                            {% else %}
+                            <p class="text-muted mb-0"><small>No messages yet</small></p>
+                            {% endif %}
+                        </div>
+                        <a href="{{ url_for('view_chat_channel', channel_id=channel.id) }}" class="btn btn-success btn-sm">
+                            <i class="fas fa-comments"></i> Join
+                        </a>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="alert alert-info mt-3">
+                    You are not a member of any stations yet, or your stations don't have chat channels.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Chat Guidelines -->
+<div class="card mt-3">
+    <div class="card-header bg-info text-white">
+        <h3 class="mb-0">Chat Guidelines</h3>
+    </div>
+    <div class="card-body">
+        <ul>
+            <li>Be respectful and professional in all communications</li>
+            <li>Use the general chat for platform-wide discussions</li>
+            <li>Use station chats for station-specific topics</li>
+            <li>Messages are visible to all members of the respective channel</li>
+            <li>Admins can access all chat channels</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

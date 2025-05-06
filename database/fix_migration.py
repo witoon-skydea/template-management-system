@@ -2,26 +2,14 @@ import os
 import sys
 import sqlite3
 import datetime
-import enum
 
-# Add parent directory to path to allow importing from database.models
+# Add parent directory to path to allow importing from database models
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Define StationUserRole class locally to avoid import issues
-class StationUserRole(enum.Enum):
-    STATION_MASTER = 'station_master'
-    STATION_STAFF = 'station_staff'
-
-# Import models individually, with fallback for Station and StationUser
-try:
-    from database.models import init_db, get_session, Base, Station, StationUser, StationUserRole
-except ImportError:
-    from database.models import init_db, get_session, Base
-
-def migrate_database():
+def fix_database_schema():
     """
-    Migrate the database to add Station and StationUser tables,
-    and add station_id column to Templates table
+    Fix the database schema by adding the station_id column to the templates table
+    and creating station-related tables if they don't exist
     """
     # Get the absolute path to the database file
     db_dir = os.path.dirname(os.path.abspath(__file__))
@@ -42,6 +30,7 @@ def migrate_database():
         stations_exists = cursor.fetchone() is not None
         
         if not stations_exists:
+            print("Creating stations table...")
             # Create the stations table
             cursor.execute('''
             CREATE TABLE stations (
@@ -55,6 +44,7 @@ def migrate_database():
             ''')
             
             # Create the station_users association table
+            print("Creating station_users table...")
             cursor.execute('''
             CREATE TABLE station_users (
                 id INTEGER PRIMARY KEY,
@@ -66,17 +56,18 @@ def migrate_database():
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
             ''')
-            
-            # Check if templates table has station_id column
-            cursor.execute("PRAGMA table_info(templates)")
-            columns = cursor.fetchall()
-            station_id_exists = any(column[1] == 'station_id' for column in columns)
-            
-            if not station_id_exists:
-                # Add station_id column to templates table
-                cursor.execute('''
-                ALTER TABLE templates ADD COLUMN station_id INTEGER
-                ''')
+        
+        # Check if templates table has station_id column
+        cursor.execute("PRAGMA table_info(templates)")
+        columns = cursor.fetchall()
+        station_id_exists = any(column[1] == 'station_id' for column in columns)
+        
+        if not station_id_exists:
+            print("Adding station_id column to templates table...")
+            # Add station_id column to templates table
+            cursor.execute('''
+            ALTER TABLE templates ADD COLUMN station_id INTEGER
+            ''')
             
             # Create default station for existing templates
             cursor.execute('''
@@ -87,51 +78,46 @@ def migrate_database():
             
             # Get the new station's ID
             default_station_id = cursor.lastrowid
+            print(f"Created Default Station with ID {default_station_id}")
             
             # Update all existing templates to belong to the default station
             cursor.execute('''
             UPDATE templates SET station_id = ?
             ''', (default_station_id,))
+            print("Updated existing templates to use Default Station")
             
             # Add all existing users to the default station
             cursor.execute('''
-            SELECT id FROM users
+            SELECT id, username FROM users
             ''')
-            user_ids = cursor.fetchall()
+            users = cursor.fetchall()
             
             # Make admin the station master
             cursor.execute('''
             INSERT INTO station_users (station_id, user_id, role)
-            VALUES (?, (SELECT id FROM users WHERE username = 'admin'), ?)
-            ''', (default_station_id, StationUserRole.STATION_MASTER.value))
+            VALUES (?, (SELECT id FROM users WHERE username = 'admin'), 'station_master')
+            ''', (default_station_id,))
+            print("Added admin as station_master")
             
             # Make other users station staff
-            for user_id in user_ids:
-                cursor.execute('''
-                SELECT username FROM users WHERE id = ?
-                ''', (user_id[0],))
-                username = cursor.fetchone()[0]
-                
+            for user_id, username in users:
                 if username != 'admin':
                     cursor.execute('''
                     INSERT INTO station_users (station_id, user_id, role)
-                    VALUES (?, ?, ?)
-                    ''', (default_station_id, user_id[0], StationUserRole.STATION_STAFF.value))
+                    VALUES (?, ?, 'station_staff')
+                    ''', (default_station_id, user_id))
+                    print(f"Added user {username} as station_staff")
             
             conn.commit()
-            print("Migration completed successfully!")
-            print(f"Created 'Default Station' with ID {default_station_id}")
-            print("All existing templates have been assigned to the Default Station")
-            print("Admin user has been assigned as station_master")
-            print("All other users have been assigned as station_staff")
+            print("Migration fix completed successfully!")
         else:
-            print("Migration has already been performed.")
+            print("Templates table already has station_id column.")
     
     except Exception as e:
         conn.rollback()
-        print(f"Error during migration: {str(e)}")
+        print(f"Error during migration fix: {str(e)}")
     finally:
         conn.close()
 
 if __name__ == "__main__":
-    migrate_database()
+    fix_database_schema()

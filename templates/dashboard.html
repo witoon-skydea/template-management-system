@@ -3,7 +3,57 @@
 {% block title %}Dashboard - Template Management System{% endblock %}
 
 {% block content %}
-<h2>Dashboard</h2>
+<div class="d-flex justify-content-between align-items-center">
+    <h2>Dashboard</h2>
+    <div>
+        {% if current_user.is_admin %}
+        <a href="{{ url_for('admin_stations') }}" class="btn btn-primary">
+            <i class="fas fa-building"></i> Manage Stations
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Stations Section -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h3>My Stations</h3>
+            </div>
+            <div class="card-body">
+                {% if stations %}
+                <div class="row row-cols-1 row-cols-md-3 g-4">
+                    {% for station in stations %}
+                    <div class="col">
+                        <div class="card h-100 {% if station.role == 'Admin' %}border-primary{% elif station.role == 'station_master' %}border-success{% else %}border-info{% endif %}">
+                            <div class="card-header {% if station.role == 'Admin' %}bg-primary text-white{% elif station.role == 'station_master' %}bg-success text-white{% else %}bg-info text-white{% endif %}">
+                                <h5 class="card-title mb-0">{{ station.name }}</h5>
+                            </div>
+                            <div class="card-body">
+                                <p class="card-text">{{ station.description or 'No description' }}</p>
+                                <p class="card-text">
+                                    <span class="badge {% if station.role == 'Admin' %}bg-primary{% elif station.role == 'station_master' %}bg-success{% else %}bg-info{% endif %}">
+                                        {{ station.role }}
+                                    </span>
+                                </p>
+                            </div>
+                            <div class="card-footer bg-transparent border-top-0">
+                                <a href="{{ url_for('view_station', station_id=station.id) }}" class="btn btn-primary w-100">
+                                    <i class="fas fa-arrow-right"></i> Enter Station
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p>You don't have access to any stations yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
 
 <div class="row mt-4">
     <!-- My Templates Section -->
@@ -22,7 +72,7 @@
                     <div class="list-group-item">
                         <div class="d-flex w-100 justify-content-between">
                             <h5 class="mb-1">{{ template.title }}</h5>
-                            <small>{{ template.created_at.strftime('%Y-%m-%d') }}</small>
+                            <small>{{ template.created_at.strftime('%Y-%m-%d') if template.created_at else 'N/A' }}</small>
                         </div>
                         <p class="mb-1">{{ template.description or 'No description' }}</p>
                         {% if template.is_fork %}
@@ -99,7 +149,7 @@
                     <div class="list-group-item">
                         <div class="d-flex w-100 justify-content-between">
                             <h5 class="mb-1">{{ template.title }}</h5>
-                            <small>{{ template.created_at.strftime('%Y-%m-%d') }}</small>
+                            <small>{{ template.created_at.strftime('%Y-%m-%d') if template.created_at else 'N/A' }}</small>
                         </div>
                         <p class="mb-1">{{ template.description or 'No description' }}</p>
                         <p class="mb-1"><small>Created by: {{ template.creator.username }}</small></p>
@@ -144,7 +194,7 @@
                     <div class="list-group-item">
                         <div class="d-flex w-100 justify-content-between">
                             <h5 class="mb-1">{{ document.title }}</h5>
-                            <small>{{ document.created_at.strftime('%Y-%m-%d') }}</small>
+                            <small>{{ document.created_at.strftime('%Y-%m-%d') if document.created_at else 'N/A' }}</small>
                         </div>
                         <p class="mb-1">{{ document.description or 'No description' }}</p>
                         <p class="mb-1"><small>Template: {{ document.template.title }}</small></p>
