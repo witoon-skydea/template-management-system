@@ -2,11 +2,57 @@
 
 {% block title %}Edit Document - Template Management System{% endblock %}
 
+{% block head %}
+<style>
+    .interactive-input-box {
+        background-color: #e6f7ff;
+        border: 2px dashed #1890ff;
+        padding: 4px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        display: inline-block;
+        margin: 2px 0;
+        transition: all 0.3s ease;
+    }
+    
+    .interactive-input-box:hover {
+        background-color: #bae7ff;
+        border-color: #096dd9;
+        transform: translateY(-1px);
+    }
+    
+    .interactive-input-box.editing {
+        background-color: #fffbe6;
+        border: 2px solid #faad14;
+        box-shadow: 0 0 0 2px rgba(250, 173, 20, 0.2);
+    }
+    
+    .markdown-content {
+        line-height: 1.6;
+    }
+    
+    .modal-dialog {
+        max-width: 650px;
+    }
+    
+    .edit-help-text {
+        margin-top: 10px;
+        padding: 10px;
+        background-color: #f8f9fa;
+        border-radius: 4px;
+        border-left: 4px solid #17a2b8;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="d-flex justify-content-between align-items-center">
     <h2>Edit Document</h2>
     <div>
-        <a href="{{ url_for('view_document', document_id=document.id) }}" class="btn btn-secondary">
+        <button type="button" id="saveAllChangesBtn" class="btn btn-success">
+            <i class="fas fa-save"></i> Save All Changes
+        </button>
+        <a href="{{ url_for('view_document', document_id=document.id) }}" class="btn btn-outline-secondary ms-2">
             <i class="fas fa-times"></i> Cancel
         </a>
     </div>
@@ -14,7 +60,7 @@
 
 <div class="card mt-4">
     <div class="card-body">
-        <form method="POST" action="{{ url_for('edit_document', document_id=document.id) }}">
+        <form id="documentForm" method="POST" action="{{ url_for('edit_document', document_id=document.id) }}">
             <div class="mb-3">
                 <label for="title" class="form-label">Document Title</label>
                 <input type="text" class="form-control" id="title" name="title" value="{{ document.title }}" required>
@@ -24,27 +70,227 @@
                 <textarea class="form-control" id="description" name="description" rows="2">{{ document.description or '' }}</textarea>
             </div>
             
-            <h5 class="mt-4">Input Values</h5>
+            <!-- Input fields for all input box values -->
+            <h5 class="mt-4 mb-3">Document Content Fields</h5>
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle"></i> Editing values below will update the content in both places - you can edit either here or by clicking on the highlighted fields in the preview below.
+            </div>
             
-            {% if input_boxes %}
-            <div class="list-group mb-3">
-                {% for input_box in input_boxes %}
-                <div class="list-group-item">
-                    <div class="mb-3">
-                        <label for="input_{{ input_box.id }}" class="form-label">{{ input_box.label }}</label>
-                        <textarea class="form-control" id="input_{{ input_box.id }}" name="input_{{ input_box.id }}" rows="2">{{ input_value_dict.get(input_box.id, '') }}</textarea>
+            <div class="row">
+                {% for box in input_boxes %}
+                <div class="col-md-6 mb-3">
+                    <div class="card">
+                        <div class="card-body">
+                            <label for="input_{{ box.id }}" class="form-label">{{ box.label }}</label>
+                            <textarea class="form-control input-box-editor" 
+                                    id="input_{{ box.id }}" 
+                                    name="input_{{ box.id }}" 
+                                    data-box-id="{{ box.id }}"
+                                    rows="3">{{ input_value_dict.get(box.id, '') }}</textarea>
+                        </div>
                     </div>
                 </div>
                 {% endfor %}
             </div>
-            {% else %}
-            <div class="alert alert-info">
-                This template does not have any input boxes.
-            </div>
-            {% endif %}
-            
-            <button type="submit" class="btn btn-primary">Save Changes</button>
         </form>
     </div>
 </div>
+
+<div class="card mt-4">
+    <div class="card-header">
+        <h5 class="mb-0">Document Preview</h5>
+    </div>
+    <div class="card-body">
+        <div class="edit-help-text mb-3">
+            <i class="fas fa-lightbulb text-info"></i> <strong>Tip:</strong> Click on any highlighted field in the document to edit it directly.
+        </div>
+        <div class="markdown-content">
+            <div id="interactive-document-content">
+                {{ html_content|safe }}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Input Edit Modal -->
+<div class="modal fade" id="editInputModal" tabindex="-1" aria-labelledby="editInputModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editInputModalLabel">Edit Field Value</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editInputForm">
+                    <input type="hidden" id="modalInputBoxId" name="inputBoxId">
+                    <div class="mb-3">
+                        <label for="modalInputLabel" class="form-label">Field Label</label>
+                        <input type="text" class="form-control" id="modalInputLabel" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label for="modalInputValue" class="form-label">Value</label>
+                        <textarea class="form-control" id="modalInputValue" name="inputValue" rows="5"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="saveInputBtn">Apply Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log("Document editor loaded");
+        
+        // Initialize Bootstrap components
+        const modalElement = document.getElementById('editInputModal');
+        if (!modalElement) {
+            console.error("Modal element not found!");
+            return;
+        }
+        
+        const editModal = new bootstrap.Modal(modalElement);
+        let currentEditingElement = null;
+        
+        // Function to set up the interactive input boxes in the document content
+        function setupInputBoxes() {
+            console.log("Setting up interactive input boxes");
+            const content = document.getElementById('interactive-document-content');
+            if (!content) {
+                console.error("Content element not found!");
+                return;
+            }
+            
+            // Get all interactive input boxes
+            const boxes = content.querySelectorAll('.interactive-input-box');
+            console.log(`Found ${boxes.length} interactive input boxes in the document`);
+            
+            // Add click handlers to each box
+            boxes.forEach(box => {
+                box.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    openEditModal(this);
+                });
+            });
+        }
+        
+        // Function to open the edit modal for an input box
+        function openEditModal(box) {
+            console.log("Opening edit modal for box", box);
+            
+            // Highlight the current editing element
+            if (currentEditingElement) {
+                currentEditingElement.classList.remove('editing');
+            }
+            
+            currentEditingElement = box;
+            box.classList.add('editing');
+            
+            // Get box data
+            const boxId = box.getAttribute('data-box-id');
+            const boxLabel = box.getAttribute('data-box-label');
+            const boxValue = box.textContent.trim();
+            
+            console.log(`Editing box ${boxId} (${boxLabel}): "${boxValue}"`);
+            
+            // Fill in the modal
+            document.getElementById('modalInputBoxId').value = boxId;
+            document.getElementById('modalInputLabel').value = boxLabel;
+            document.getElementById('modalInputValue').value = boxValue;
+            
+            // Show the modal
+            editModal.show();
+        }
+        
+        // Function to update all instances of a specific input box value
+        function updateInputBoxValue(boxId, value) {
+            console.log(`Updating all instances of box ${boxId} to "${value}"`);
+            
+            // Update the form field
+            const formField = document.getElementById(`input_${boxId}`);
+            if (formField) {
+                formField.value = value;
+            }
+            
+            // Update any interactive elements in the preview
+            const boxes = document.querySelectorAll(`.interactive-input-box[data-box-id="${boxId}"]`);
+            boxes.forEach(box => {
+                box.textContent = value;
+                box.setAttribute('data-value', value);
+            });
+        }
+        
+        // Handle modal save button click
+        document.getElementById('saveInputBtn').addEventListener('click', function() {
+            const boxId = document.getElementById('modalInputBoxId').value;
+            const value = document.getElementById('modalInputValue').value;
+            
+            console.log(`Saving box ${boxId} with value "${value}"`);
+            
+            // Update all instances of this input box
+            updateInputBoxValue(boxId, value);
+            
+            // Remove highlighting
+            if (currentEditingElement) {
+                currentEditingElement.classList.remove('editing');
+                currentEditingElement = null;
+            }
+            
+            // Close the modal
+            editModal.hide();
+            
+            // Show a success message
+            showNotification('Field updated successfully!');
+        });
+        
+        // Handle form textarea changes - sync with interactive boxes
+        document.querySelectorAll('.input-box-editor').forEach(editor => {
+            editor.addEventListener('input', function() {
+                const boxId = this.getAttribute('data-box-id');
+                const value = this.value;
+                
+                // Update the interactive boxes in the preview
+                const boxes = document.querySelectorAll(`.interactive-input-box[data-box-id="${boxId}"]`);
+                boxes.forEach(box => {
+                    box.textContent = value;
+                    box.setAttribute('data-value', value);
+                });
+            });
+        });
+        
+        // Handle form submission via the Save All Changes button
+        document.getElementById('saveAllChangesBtn').addEventListener('click', function() {
+            document.getElementById('documentForm').submit();
+        });
+        
+        // Function to show a temporary notification
+        function showNotification(message) {
+            const notification = document.createElement('div');
+            notification.className = 'alert alert-success alert-dismissible fade show position-fixed';
+            notification.style.top = '20px';
+            notification.style.right = '20px';
+            notification.style.zIndex = '9999';
+            notification.innerHTML = `
+                <i class="fas fa-check-circle"></i> ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // Auto-dismiss after 3 seconds
+            setTimeout(() => {
+                const bsAlert = new bootstrap.Alert(notification);
+                bsAlert.close();
+            }, 3000);
+        }
+        
+        // Call setup function
+        setupInputBoxes();
+    });
+</script>
 {% endblock %}

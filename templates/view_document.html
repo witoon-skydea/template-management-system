@@ -130,9 +130,12 @@
     </div>
     <div class="card-body">
         <div class="tab-content" id="document-tab-content">
-            <div class="tab-pane fade show active" id="preview" role="tabpanel" aria-labelledby="preview-tab">
+<div class="tab-pane fade show active" id="preview" role="tabpanel" aria-labelledby="preview-tab">
                 <div class="markdown-content">
-                    {{ html_content|safe }}
+                    <!-- Replace this with our interactive content -->
+                    <div id="interactive-document-content">
+                        {{ html_content|safe }}
+                    </div>
                 </div>
             </div>
             <div class="tab-pane fade" id="template" role="tabpanel" aria-labelledby="template-tab">
@@ -209,7 +212,10 @@
 {% block scripts %}
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        // Setup edit input buttons
+        // Process and enhance the document content to make input boxes interactive
+        enhanceDocumentContent();
+        
+        // Setup edit input buttons in the template info tab
         const editButtons = document.querySelectorAll('.edit-input-btn');
         const editModal = new bootstrap.Modal(document.getElementById('editInputModal'));
         
@@ -218,6 +224,21 @@
                 const boxId = this.getAttribute('data-box-id');
                 const boxLabel = this.getAttribute('data-box-label');
                 const value = this.getAttribute('data-value');
+                
+                document.getElementById('inputBoxId').value = boxId;
+                document.getElementById('inputLabel').value = boxLabel;
+                document.getElementById('inputValue').value = value;
+                
+                editModal.show();
+            });
+        });
+
+        // Add click event to interactive input boxes
+        document.querySelectorAll('.interactive-input-box').forEach(box => {
+            box.addEventListener('click', function() {
+                const boxId = this.getAttribute('data-box-id');
+                const boxLabel = this.getAttribute('data-box-label');
+                const value = this.textContent.trim();
                 
                 document.getElementById('inputBoxId').value = boxId;
                 document.getElementById('inputLabel').value = boxLabel;
@@ -246,8 +267,22 @@
                     // Close modal
                     editModal.hide();
                     
-                    // Reload page to show updated content
-                    window.location.reload();
+                    // Update the content in the document without reloading
+                    document.querySelectorAll(`.interactive-input-box[data-box-id="${boxId}"]`).forEach(box => {
+                        box.textContent = value;
+                        // Update the data-value attribute for consistency
+                        box.setAttribute('data-value', value);
+                    });
+                    
+                    // Also update any displays in the template info tab
+                    const tableCell = document.querySelector(`tr[data-box-id="${boxId}"] td:nth-child(2)`);
+                    if (tableCell) {
+                        tableCell.textContent = value || 'Empty';
+                    }
+                    const editBtn = document.querySelector(`.edit-input-btn[data-box-id="${boxId}"]`);
+                    if (editBtn) {
+                        editBtn.setAttribute('data-value', value);
+                    }
                 } else {
                     alert('Error: ' + data.message);
                 }
@@ -257,6 +292,37 @@
                 alert('An error occurred while saving the input value.');
             });
         });
+
+        // Function to enhance document content with interactive elements
+        function enhanceDocumentContent() {
+            const content = document.getElementById('interactive-document-content');
+            if (!content) return;
+            
+            // Replace input box values with interactive elements
+            // This approach requires the backend to provide special markers in the HTML
+            {% for box in input_boxes %}
+            const boxId = {{ box.id }};
+            const boxLabel = "{{ box.label }}";
+            const boxValue = "{{ input_value_dict.get(box.id, {}).value or '' }}";
+            
+            // Create a regex pattern to find placeholders for this input box
+            // We're looking for spans that might have been created to mark these inputs
+            const elements = content.querySelectorAll(`[data-input-id="${boxId}"]`);
+            elements.forEach(element => {
+                // Make the element interactive
+                element.classList.add('interactive-input-box');
+                element.setAttribute('data-box-id', boxId);
+                element.setAttribute('data-box-label', boxLabel);
+                element.setAttribute('data-value', boxValue);
+                element.style.backgroundColor = '#f0f8ff';
+                element.style.border = '1px dashed #007bff';
+                element.style.padding = '2px 6px';
+                element.style.borderRadius = '3px';
+                element.style.cursor = 'pointer';
+                element.title = 'Click to edit this field';
+            });
+            {% endfor %}
+        }
     });
 </script>
 {% endblock %}

@@ -10,11 +10,14 @@ import re
 from docx import Document as DocxDocument
 import bleach
 from functools import wraps
+import copy
+import datetime
+from sqlalchemy import and_, or_
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy.orm import joinedload
-from database.models import init_db, get_session, User, Template, InputBox, Document, DocumentInputValue
+from database.models import init_db, get_session, User, Template, InputBox, Document, DocumentInputValue, TemplateAssignment, Notification
 
 # Configure application
 app = Flask(__name__, 
@@ -58,11 +61,42 @@ def extract_input_boxes(content):
     input_boxes = re.findall(pattern, content)
     return input_boxes
 
-def markdown_to_html(md_content):
+def markdown_to_html(md_content, input_boxes=None, input_values=None, document_id=None):
     """
     Convert markdown to HTML with enhanced extensions for better rendering
+    
+    If input_boxes and input_values are provided, the function will add
+    special markup for input boxes to make them interactive in the UI
     """
     try:
+        # Process input boxes if provided
+        processed_content = md_content
+        box_mappings = {}
+        
+        if input_boxes and document_id:
+            # Create a map of input box placeholders to their IDs for later replacement
+            for box in input_boxes:
+                placeholder = f'*****{box.box_id}*****'
+                value = ""
+                
+                # Find the value for this box if input_values provided
+                if input_values:
+                    for val in input_values:
+                        if val.input_box_id == box.id:
+                            value = val.value
+                            break
+                
+                # Create a unique placeholder that won't be affected by markdown processing
+                unique_placeholder = f'INPUTBOX_{box.id}_{box.box_id}'
+                box_mappings[unique_placeholder] = {
+                    'id': box.id,
+                    'label': box.label,
+                    'value': value
+                }
+                
+                # Replace the original placeholder with our unique one
+                processed_content = processed_content.replace(placeholder, unique_placeholder)
+        
         # Use more extensions for better markdown rendering
         extensions = [
             'markdown.extensions.extra',
@@ -73,7 +107,7 @@ def markdown_to_html(md_content):
             'markdown.extensions.tables',
         ]
         
-        html = markdown.markdown(md_content, extensions=extensions)
+        html = markdown.markdown(processed_content, extensions=extensions)
         
         # Use bleach to clean but allow most HTML tags for proper rendering
         # Convert frozenset to list before adding additional tags
@@ -86,6 +120,8 @@ def markdown_to_html(md_content):
         allowed_attributes = {
             **bleach.sanitizer.ALLOWED_ATTRIBUTES,
             'img': ['src', 'alt', 'title'],
+            'span': ['class', 'id', 'style', 'data-input-id', 'data-box-id', 'data-box-label', 'data-value', 
+                     'contenteditable', 'title', 'onclick'],
             '*': ['class', 'id', 'style'],
         }
         
@@ -95,6 +131,18 @@ def markdown_to_html(md_content):
             attributes=allowed_attributes,
             strip=True
         )
+        
+        # Replace our unique placeholders with interactive spans
+        if box_mappings:
+            for placeholder, box in box_mappings.items():
+                # Create a more visually distinct and clickable input box span
+                input_span = f'<span class="interactive-input-box" ' + \
+                           f'data-box-id="{box["id"]}" ' + \
+                           f'data-box-label="{box["label"]}" ' + \
+                           f'data-value="{box["value"]}" ' + \
+                           f'title="Click to edit: {box["label"]}">' + \
+                           f'{box["value"] or "[Click to enter value]"}</span>'
+                clean_html = clean_html.replace(placeholder, input_span)
         
         return clean_html
     except Exception as e:
@@ -380,14 +428,32 @@ def dashboard():
     db_session = get_session(engine)
     
     # Get user's templates
-    templates = db_session.query(Template).filter_by(creator_id=current_user.id).all()
+    my_templates = db_session.query(Template).filter_by(creator_id=current_user.id).all()
+    
+    # Get templates assigned to the user with eager loading of creator and assignments relationships
+    assigned_templates_query = db_session.query(Template).options(
+        joinedload(Template.creator),
+        joinedload(Template.assignments)
+    ).join(
+        TemplateAssignment, Template.id == TemplateAssignment.template_id
+    ).filter(
+        TemplateAssignment.assignee_id == current_user.id
+    )
+    assigned_templates = assigned_templates_query.all()
     
     # Get user's documents, eagerly loading the template relationship to prevent DetachedInstanceError
     documents = db_session.query(Document).options(joinedload(Document.template)).filter_by(creator_id=current_user.id).all()
     
+    # Get all users for template assignment
+    users = db_session.query(User).filter(User.id != current_user.id).all()
+    
     db_session.close()
     
-    return render_template('dashboard.html', templates=templates, documents=documents)
+    return render_template('dashboard.html', 
+                          my_templates=my_templates, 
+                          assigned_templates=assigned_templates,
+                          documents=documents,
+                          users=users)
 
 @app.route('/templates/create', methods=['GET', 'POST'])
 @login_required
@@ -475,8 +541,24 @@ def edit_template(template_id):
         flash('Template not found', 'danger')
         return redirect(url_for('dashboard'))
     
-    # Check if the user is the creator
-    if template.creator_id != current_user.id:
+    # Check if the user is the creator or has edit permission
+    has_permission = False
+    
+    # Creator always has permission
+    if template.creator_id == current_user.id:
+        has_permission = True
+    else:
+        # Check if user has been assigned this template with edit permission
+        assignment = db_session.query(TemplateAssignment).filter_by(
+            template_id=template.id,
+            assignee_id=current_user.id,
+            can_edit=True
+        ).first()
+        
+        if assignment:
+            has_permission = True
+    
+    if not has_permission:
         db_session.close()
         flash('You do not have permission to edit this template', 'danger')
         return redirect(url_for('dashboard'))
@@ -600,11 +682,19 @@ def view_document(document_id):
         return redirect(url_for('dashboard'))
     
     try:
-        # Get rendered content
+        # Get input boxes for the template
+        input_boxes = db_session.query(InputBox).filter_by(template_id=document.template_id).order_by(InputBox.position).all()
+        
+        # Get input values
+        input_values = db_session.query(DocumentInputValue).filter_by(document_id=document.id).all()
+        
+        # Get the template content and rendered content
+        template_content = document.template.content
         rendered_content = document.get_rendered_content()
         
-        # Convert markdown to HTML
-        html_content = markdown_to_html(rendered_content)
+        # Convert markdown to HTML with interactive input boxes
+        # We use rendered_content for viewing since it already has the values filled in
+        html_content = markdown_to_html(rendered_content, input_boxes, input_values, document_id)
     except Exception as e:
         db_session.close()
         flash(f'Error rendering document: {str(e)}', 'danger')
@@ -693,10 +783,26 @@ def edit_document(document_id):
     
     db_session.close()
     
+    # For document editing, we need to ensure we're working with the template content
+    # and replacing the input box placeholders with their current values
+    template = db_session.query(Template).options(joinedload(Template.input_boxes)).get(document.template_id)
+    template_content = template.content
+    
+    # Pass input boxes, values and document_id for interactive editing
+    input_values = db_session.query(DocumentInputValue).filter_by(document_id=document.id).all()
+    html_content = markdown_to_html(template_content, input_boxes, input_values, document.id)
+    
+    # Debug information for the console
+    print(f"Rendering template for document {document.id} with {len(input_boxes)} input boxes")
+    for box in input_boxes:
+        value = input_value_dict.get(box.id, "")
+        print(f"Input box {box.id} ({box.box_id}): {value}")
+    
     return render_template('edit_document.html', 
                           document=document, 
                           input_boxes=input_boxes, 
-                          input_value_dict=input_value_dict)
+                          input_value_dict=input_value_dict,
+                          html_content=html_content)
 
 @app.route('/documents/<int:document_id>/export/docx')
 @login_required
@@ -810,6 +916,147 @@ def export_txt(document_id):
     flash(f'Document exported to {txt_path}', 'success')
     return redirect(url_for('view_document', document_id=document_id))
 
+@app.route('/templates/<int:template_id>/assign', methods=['POST'])
+@login_required
+def assign_template(template_id):
+    """Assign a template to another user"""
+    db_session = get_session(engine)
+    template = db_session.query(Template).get(template_id)
+    
+    if not template:
+        db_session.close()
+        flash('Template not found', 'danger')
+        return redirect(url_for('dashboard'))
+    
+    # Check if the user is the creator
+    if template.creator_id != current_user.id:
+        db_session.close()
+        flash('You do not have permission to assign this template', 'danger')
+        return redirect(url_for('dashboard'))
+    
+    # Get form data
+    assignee_id = request.form.get('assignee_id')
+    can_edit = 'can_edit' in request.form
+    
+    if not assignee_id:
+        db_session.close()
+        flash('Please select a user to assign the template to', 'danger')
+        return redirect(url_for('dashboard'))
+    
+    # Check if the assignee exists
+    assignee = db_session.query(User).get(assignee_id)
+    if not assignee:
+        db_session.close()
+        flash('Selected user not found', 'danger')
+        return redirect(url_for('dashboard'))
+    
+    # Check if assignment already exists
+    existing_assignment = db_session.query(TemplateAssignment).filter_by(
+        template_id=template.id,
+        assignee_id=assignee.id
+    ).first()
+    
+    if existing_assignment:
+        # Update existing assignment
+        existing_assignment.can_edit = can_edit
+        existing_assignment.assigned_by_id = current_user.id
+        existing_assignment.assigned_at = datetime.datetime.utcnow()
+        
+        # Save the username before closing the session
+        username = assignee.username
+        
+        db_session.commit()
+        db_session.close()
+        
+        flash(f'Template reassigned to {username}', 'success')
+        return redirect(url_for('dashboard'))
+    
+    # Create new assignment
+    assignment = TemplateAssignment(
+        template_id=template.id,
+        assignee_id=assignee.id,
+        assigned_by_id=current_user.id,
+        can_edit=can_edit
+    )
+    
+    # Save the username before closing the session
+    username = assignee.username
+    
+    db_session.add(assignment)
+    db_session.commit()
+    db_session.close()
+    
+    flash(f'Template assigned to {username}', 'success')
+    return redirect(url_for('dashboard'))
+
+@app.route('/templates/<int:template_id>/fork')
+@login_required
+def fork_template(template_id):
+    """Fork a template to create your own copy"""
+    db_session = get_session(engine)
+    
+    # Load the template with input boxes
+    template = db_session.query(Template).options(joinedload(Template.input_boxes)).get(template_id)
+    
+    if not template:
+        db_session.close()
+        flash('Template not found', 'danger')
+        return redirect(url_for('dashboard'))
+    
+    # Check if user has access to the template (creator or assignee)
+    has_access = False
+    
+    if template.creator_id == current_user.id:
+        has_access = True
+    else:
+        # Check if user has been assigned this template
+        assignment = db_session.query(TemplateAssignment).filter_by(
+            template_id=template.id,
+            assignee_id=current_user.id
+        ).first()
+        
+        if assignment:
+            has_access = True
+    
+    if not has_access:
+        db_session.close()
+        flash('You do not have permission to fork this template', 'danger')
+        return redirect(url_for('dashboard'))
+    
+    # Create a new template as a fork
+    forked_template = Template(
+        title=f"{template.title} (Fork)",
+        description=template.description,
+        content=template.content,
+        creator_id=current_user.id,
+        parent_id=template.id,
+        is_fork=True
+    )
+    
+    db_session.add(forked_template)
+    db_session.flush()  # Flush to get the ID
+    
+    # Copy input boxes
+    for box in template.input_boxes:
+        new_box = InputBox(
+            box_id=box.box_id,
+            template_id=forked_template.id,
+            label=box.label,
+            default_value=box.default_value,
+            position=box.position
+        )
+        db_session.add(new_box)
+    
+    db_session.commit()
+    
+    # Store the template_id before closing the session to prevent DetachedInstanceError
+    forked_template_id = forked_template.id
+    
+    db_session.close()
+    
+    flash('Template forked successfully', 'success')
+    return redirect(url_for('view_template', template_id=forked_template_id))
+
 @app.route('/api/input_value/<int:document_id>/<int:input_box_id>', methods=['POST'])
 @login_required
 def update_input_value(document_id, input_box_id):
@@ -860,6 +1107,140 @@ def update_input_value(document_id, input_box_id):
     db_session.close()
     
     return jsonify({'status': 'success', 'message': 'Input value updated'})
+
+@app.route('/templates/<int:template_id>/delete')
+@login_required
+def delete_template(template_id):
+    """Delete a template and all associated documents"""
+    db_session = get_session(engine)
+    
+    # Get the template with eager loading of input_boxes
+    template = db_session.query(Template).options(joinedload(Template.input_boxes)).get(template_id)
+    
+    if not template:
+        db_session.close()
+        flash('Template not found', 'danger')
+        return redirect(url_for('dashboard'))
+    
+    # Check if the user is the creator
+    if template.creator_id != current_user.id:
+        db_session.close()
+        flash('You do not have permission to delete this template', 'danger')
+        return redirect(url_for('dashboard'))
+    
+    try:
+        # Get all documents based on this template
+        documents = db_session.query(Document).filter_by(template_id=template.id).all()
+        
+        # Find all users who have documents based on this template
+        affected_users = set()
+        for doc in documents:
+            if doc.creator_id != current_user.id:  # Don't notify yourself
+                affected_users.add(doc.creator_id)
+        
+        # Get template name before deletion
+        template_name = template.title
+        
+        # Create notifications for affected users
+        for user_id in affected_users:
+            notification = Notification(
+                user_id=user_id,
+                title="Template Deleted",
+                message=f"A template you were using '{template_name}' has been deleted by {current_user.username}. Any documents you created using this template have also been deleted.",
+                notification_type="template_deletion"
+            )
+            db_session.add(notification)
+        
+        # Delete all documents based on this template
+        for document in documents:
+            # Delete document input values first
+            db_session.query(DocumentInputValue).filter_by(document_id=document.id).delete()
+        
+        # Now delete the documents
+        db_session.query(Document).filter_by(template_id=template.id).delete()
+        
+        # Delete template assignments
+        db_session.query(TemplateAssignment).filter_by(template_id=template.id).delete()
+        
+        # Delete the template
+        db_session.delete(template)
+        
+        db_session.commit()
+        
+        flash(f'Template "{template_name}" and all associated documents have been deleted', 'success')
+        
+    except Exception as e:
+        db_session.rollback()
+        flash(f'Error deleting template: {str(e)}', 'danger')
+    finally:
+        db_session.close()
+    
+    return redirect(url_for('dashboard'))
+
+@app.route('/notifications')
+@login_required
+def view_notifications():
+    """View all notifications for the current user"""
+    db_session = get_session(engine)
+    
+    # Get all notifications for the current user
+    notifications = db_session.query(Notification).filter_by(
+        user_id=current_user.id
+    ).order_by(Notification.created_at.desc()).all()
+    
+    db_session.close()
+    
+    return render_template('notifications.html', notifications=notifications)
+
+@app.route('/notifications/<int:notification_id>/mark-as-read')
+@login_required
+def mark_notification_read(notification_id):
+    """Mark a notification as read"""
+    db_session = get_session(engine)
+    
+    # Get the notification
+    notification = db_session.query(Notification).filter_by(
+        id=notification_id,
+        user_id=current_user.id
+    ).first()
+    
+    if notification:
+        notification.is_read = True
+        db_session.commit()
+    
+    db_session.close()
+    
+    return redirect(url_for('view_notifications'))
+
+@app.route('/notifications/mark-all-read')
+@login_required
+def mark_all_notifications_read():
+    """Mark all notifications as read"""
+    db_session = get_session(engine)
+    
+    # Update all notifications for the current user
+    db_session.query(Notification).filter_by(
+        user_id=current_user.id,
+        is_read=False
+    ).update({Notification.is_read: True})
+    
+    db_session.commit()
+    db_session.close()
+    
+    return redirect(url_for('view_notifications'))
+
+@app.context_processor
+def inject_unread_notifications_count():
+    """Inject unread notifications count into all templates"""
+    if current_user.is_authenticated:
+        db_session = get_session(engine)
+        count = db_session.query(Notification).filter_by(
+            user_id=current_user.id,
+            is_read=False
+        ).count()
+        db_session.close()
+        return {'unread_notifications_count': count}
+    return {'unread_notifications_count': 0}
 
 if __name__ == '__main__':
     app.run(debug=True, port=6789)

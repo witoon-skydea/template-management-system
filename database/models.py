@@ -8,6 +8,43 @@ import os
 
 Base = declarative_base()
 
+# Notification model for system messages
+class Notification(Base):
+    __tablename__ = 'notifications'
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    title = Column(String(100), nullable=False)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    is_read = Column(Boolean, default=False)
+    notification_type = Column(String(50), nullable=True)  # For categorizing notifications
+    
+    # Relationships
+    user = relationship("User", back_populates="notifications")
+    
+    def __repr__(self):
+        return f"<Notification(id={self.id}, user_id={self.user_id}, title='{self.title}')>"
+
+# Template assignment model for sharing templates with other users
+class TemplateAssignment(Base):
+    __tablename__ = 'template_assignments'
+    
+    id = Column(Integer, primary_key=True)
+    template_id = Column(Integer, ForeignKey('templates.id'), nullable=False)
+    assignee_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    assigned_by_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    assigned_at = Column(DateTime, default=datetime.datetime.utcnow)
+    can_edit = Column(Boolean, default=False)  # Whether the assignee can edit the template
+    
+    # Relationships
+    template = relationship("Template", back_populates="assignments")
+    assignee = relationship("User", foreign_keys=[assignee_id], back_populates="assigned_templates")
+    assigned_by = relationship("User", foreign_keys=[assigned_by_id])
+    
+    def __repr__(self):
+        return f"<TemplateAssignment(template_id={self.template_id}, assignee_id={self.assignee_id})>"
+
 class User(Base, UserMixin):
     __tablename__ = 'users'
     
@@ -20,8 +57,10 @@ class User(Base, UserMixin):
     is_admin = Column(Boolean, default=False)
     
     # Relationships
-    templates = relationship("Template", back_populates="creator")
+    templates = relationship("Template", foreign_keys="Template.creator_id", back_populates="creator")
     documents = relationship("Document", back_populates="creator")
+    assigned_templates = relationship("TemplateAssignment", foreign_keys="TemplateAssignment.assignee_id", back_populates="assignee")
+    notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
     
     def get_id(self):
         return str(self.id)
@@ -49,11 +88,17 @@ class Template(Base):
     creator_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     modified_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    parent_id = Column(Integer, ForeignKey('templates.id'), nullable=True)  # For forked templates
+    is_fork = Column(Boolean, default=False)  # Flag to identify if this is a forked template
     
     # Relationships
-    creator = relationship("User", back_populates="templates")
+    creator = relationship("User", foreign_keys=[creator_id], back_populates="templates")
     input_boxes = relationship("InputBox", back_populates="template", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="template")
+    assignments = relationship("TemplateAssignment", back_populates="template", cascade="all, delete-orphan")
+    
+    # Self-referential relationship for forks
+    parent = relationship("Template", remote_side=[id], backref="forks", foreign_keys=[parent_id])
     
     def __repr__(self):
         return f"<Template(title='{self.title}', creator_id={self.creator_id})>"

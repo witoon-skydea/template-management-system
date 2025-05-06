@@ -4,7 +4,7 @@ from passlib.hash import pbkdf2_sha256
 
 # Add parent directory to path to allow importing from database.models
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from database.models import init_db, get_session, User
+from database.models import init_db, get_session, User, Template, TemplateAssignment
 
 def setup_database():
     """
@@ -23,7 +23,7 @@ def setup_database():
     engine = init_db(db_path)
     session = get_session(engine)
     
-    # Create a test admin user
+    # Create admin user
     admin_user = User(
         username="admin",
         email="admin@example.com",
@@ -31,13 +31,25 @@ def setup_database():
         is_admin=True
     )
     
+    # Create test user
+    test_user = User(
+        username="test",
+        email="test@example.com",
+        password_hash=pbkdf2_sha256.hash("test123"),
+        is_admin=False
+    )
+    
     session.add(admin_user)
+    session.add(test_user)
     session.commit()
     
     print(f"Database initialized at {db_path}")
     print("Created admin user:")
     print("  Username: admin")
     print("  Password: admin123")
+    print("Created test user:")
+    print("  Username: test")
+    print("  Password: test123")
     
     session.close()
 

@@ -38,15 +38,20 @@
                 <!-- Use a hidden input to store the SimpleMDE content -->
                 <textarea class="form-control" id="content" name="content" rows="10" required></textarea>
                 <input type="hidden" id="content-mirror" name="content">
+                <div class="input-box-tools mb-2 mt-3">
+                    <button type="button" id="addInputBoxBtn" class="btn btn-outline-primary">
+                        <i class="fas fa-plus-circle"></i> Add Input Box
+                    </button>
+                    <span class="ms-2 form-text">
+                        This will insert the syntax <code>*****name*****</code> at your cursor position
+                    </span>
+                </div>
                 <div class="form-text mt-2">
-                    Use markdown syntax for formatting. To create an input box, use the syntax: *****input-box***** 
-                    where "input-box" is a unique identifier for the input box.
+                    <strong>Tip:</strong> Input boxes are editable fields in your document. Create them by clicking the button above or the keyboard icon in the toolbar.
                 </div>
             </div>
-            <!-- Regular submit button -->
-            <button type="submit" id="submitTemplateBtn" class="btn btn-primary">Create Template</button>
-            <!-- Fallback button in case the form submission is intercepted -->
-            <button type="button" id="manualSubmitBtn" class="btn btn-secondary ms-2">Manual Submit</button>
+            <!-- Submit button -->
+            <button type="button" id="manualSubmitBtn" class="btn btn-primary">Create Template</button>
         </form>
     </div>
 </div>
@@ -85,6 +90,29 @@
         console.log("Document loaded");
         
         // Initialize SimpleMDE on the content textarea
+        // Define a custom button for adding input boxes
+        function insertInputBox(editor) {
+            // Open a dialog to get the input box name
+            const boxName = prompt("Enter a unique name for this input box (no spaces):");
+            
+            if (boxName) {
+                // Format the name: trim whitespace and replace spaces with underscores
+                const formattedName = boxName.trim().replace(/\s+/g, '_');
+                
+                // Insert the input box syntax at cursor position
+                const cursorPos = editor.codemirror.getCursor();
+                editor.codemirror.replaceRange(`*****${formattedName}*****`, cursorPos);
+            }
+        }
+
+        // Define our custom input box button
+        const inputBoxButton = {
+            name: "input-box",
+            action: insertInputBox,
+            className: "fa fa-keyboard-o",
+            title: "Insert Input Box",
+        };
+
         var editor = new SimpleMDE({
             element: document.getElementById('content'),
             spellChecker: false,
@@ -97,6 +125,13 @@
                 'bold', 'italic', 'heading', '|',
                 'unordered-list', 'ordered-list', '|',
                 'link', 'image', '|',
+                {
+                    name: "input-box-group",
+                    className: "fa fa-keyboard-o",
+                    title: "Insert Input Box",
+                    action: insertInputBox
+                },
+                '|',
                 'preview', 'side-by-side', 'fullscreen', '|',
                 'guide'
             ],
@@ -109,40 +144,46 @@
         var form = document.getElementById('templateForm');
         
         // Add submit event listener to the form
-        form.addEventListener('submit', function(e) {
-            console.log("Form submit event triggered");
-            
-            // Stop the form from submitting immediately
-            e.preventDefault();
-            
-            // Update the content textarea with the SimpleMDE value
-            var contentMirror = document.getElementById('content-mirror');
-            var contentValue = editor.value();
-            
-            // Update both content fields to be safe
-            document.getElementById('content').value = contentValue;
-            contentMirror.value = contentValue;
-            
-            console.log("Content updated:", contentValue);
-            
-            // Now submit the form after a short delay
-            setTimeout(function() {
-                form.submit();
-                console.log("Form submitted");
-            }, 100);
-        });
-        
-        // Add a backup manual submit button handler
+        // Add submit button handler
         document.getElementById('manualSubmitBtn').addEventListener('click', function() {
-            console.log("Manual submit button clicked");
-            
+            console.log("Submit button clicked");
+
             // Update content and submit
             document.getElementById('content').value = editor.value();
             document.getElementById('content-mirror').value = editor.value();
-            
+
             // Force direct submission
             form.submit();
-            console.log("Form submitted manually");
+            console.log("Form submitted");
+        });
+        
+        // Add the custom input box button handler
+        document.getElementById('addInputBoxBtn').addEventListener('click', function() {
+            insertInputBox(editor);
+        });
+        
+        // Add visual highlight for input box syntax in editor
+        editor.codemirror.on('change', function() {
+            const doc = editor.codemirror.getDoc();
+            const content = doc.getValue();
+            
+            // Find all input box syntax instances
+            const pattern = /\*\*\*\*\*(.*?)\*\*\*\*\*/g;
+            let match;
+            
+            // Clear existing marks
+            doc.getAllMarks().forEach(mark => mark.clear());
+            
+            // Add new marks for each match
+            while ((match = pattern.exec(content)) !== null) {
+                const start = doc.posFromIndex(match.index);
+                const end = doc.posFromIndex(match.index + match[0].length);
+                
+                doc.markText(start, end, {
+                    className: 'input-box-highlight',
+                    css: 'background-color: #e6f7ff; border-radius: 3px; border: 1px solid #91d5ff;'
+                });
+            }
         });
     });
 </script>

@@ -39,6 +39,17 @@
                 <ul class="navbar-nav">
                     {% if current_user.is_authenticated %}
                     <li class="nav-item">
+                        <a class="nav-link position-relative" href="{{ url_for('view_notifications') }}">
+                            <i class="fas fa-bell"></i>
+                            {% if unread_notifications_count > 0 %}
+                            <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">
+                                {{ unread_notifications_count }}
+                                <span class="visually-hidden">unread notifications</span>
+                            </span>
+                            {% endif %}
+                        </a>
+                    </li>
+                    <li class="nav-item">
                         <span class="nav-link">Welcome, {{ current_user.username }}</span>
                     </li>
                     <li class="nav-item">

@@ -12,6 +12,9 @@
         <a href="{{ url_for('create_document', template_id=template.id) }}" class="btn btn-success">
             <i class="fas fa-file-alt"></i> Create Document
         </a>
+        <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#deleteTemplateModal">
+            <i class="fas fa-trash"></i> Delete
+        </button>
         <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">
             <i class="fas fa-arrow-left"></i> Back
         </a>
@@ -74,6 +77,39 @@
         {% else %}
         <p>No input boxes found in this template.</p>
         {% endif %}
+    </div>
+</div>
+<!-- Delete Template Confirmation Modal -->
+<div class="modal fade" id="deleteTemplateModal" tabindex="-1" aria-labelledby="deleteTemplateModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title" id="deleteTemplateModalLabel">Confirm Template Deletion</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle"></i> <strong>Warning!</strong> This action cannot be undone.
+                </div>
+                <p>Are you sure you want to delete the template "<strong>{{ template.title }}</strong>"?</p>
+                
+                <div class="alert alert-danger">
+                    <p><i class="fas fa-trash"></i> <strong>The following will be permanently deleted:</strong></p>
+                    <ul>
+                        <li>This template and all its input box definitions</li>
+                        <li>All documents created from this template by all users</li>
+                    </ul>
+                </div>
+                
+                <p>Users who have documents based on this template will be notified of the deletion.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <a href="{{ url_for('delete_template', template_id=template.id) }}" class="btn btn-danger">
+                    <i class="fas fa-trash"></i> Delete Template
+                </a>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
