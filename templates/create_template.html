@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block title %}Create Template - Template Management System{% endblock %}
+
+{% block head %}
+<!-- SimpleMDE - Markdown Editor -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/simplemde/latest/simplemde.min.css">
+<style>
+    .editor-toolbar button {
+        color: #333;
+    }
+    .editor-toolbar.fullscreen {
+        z-index: 1030;
+    }
+    .CodeMirror-fullscreen {
+        z-index: 1020;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2>Create New Template</h2>
+
+<div class="card mt-4">
+    <div class="card-body">
+        <!-- Use regular form with direct POST method -->
+        <form method="POST" action="{{ url_for('create_template') }}" id="templateForm">
+            <div class="mb-3">
+                <label for="title" class="form-label">Title</label>
+                <input type="text" class="form-control" id="title" name="title" required>
+            </div>
+            <div class="mb-3">
+                <label for="description" class="form-label">Description</label>
+                <textarea class="form-control" id="description" name="description" rows="2"></textarea>
+            </div>
+            <div class="mb-3">
+                <label for="content" class="form-label">Content</label>
+                <!-- Use a hidden input to store the SimpleMDE content -->
+                <textarea class="form-control" id="content" name="content" rows="10" required></textarea>
+                <input type="hidden" id="content-mirror" name="content">
+                <div class="form-text mt-2">
+                    Use markdown syntax for formatting. To create an input box, use the syntax: *****input-box***** 
+                    where "input-box" is a unique identifier for the input box.
+                </div>
+            </div>
+            <!-- Regular submit button -->
+            <button type="submit" id="submitTemplateBtn" class="btn btn-primary">Create Template</button>
+            <!-- Fallback button in case the form submission is intercepted -->
+            <button type="button" id="manualSubmitBtn" class="btn btn-secondary ms-2">Manual Submit</button>
+        </form>
+    </div>
+</div>
+
+<div class="card mt-4">
+    <div class="card-header">
+        <h5>Template Creation Guide</h5>
+    </div>
+    <div class="card-body">
+        <h6>Markdown Formatting</h6>
+        <ul>
+            <li><code># Heading 1</code> - Creates a large heading</li>
+            <li><code>## Heading 2</code> - Creates a medium heading</li>
+            <li><code>### Heading 3</code> - Creates a small heading</li>
+            <li><code>**bold text**</code> - Makes text bold</li>
+            <li><code>*italic text*</code> - Makes text italic</li>
+            <li><code>[link text](url)</code> - Creates a link</li>
+            <li><code>- item</code> - Creates a bullet point</li>
+        </ul>
+        
+        <h6>Input Box Syntax</h6>
+        <p>To create an input box, use the following syntax:</p>
+        <pre><code>*****input-box-name*****</code></pre>
+        <p>Where "input-box-name" is a unique identifier for the input box. For example:</p>
+        <pre><code>Hello, my name is *****name***** and I am *****age***** years old.</code></pre>
+        <p>This creates two input boxes with identifiers "name" and "age".</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- SimpleMDE - Markdown Editor -->
+<script src="https://cdn.jsdelivr.net/simplemde/latest/simplemde.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log("Document loaded");
+        
+        // Initialize SimpleMDE on the content textarea
+        var editor = new SimpleMDE({
+            element: document.getElementById('content'),
+            spellChecker: false,
+            autosave: {
+                enabled: true,
+                uniqueId: 'template_editor',
+                delay: 1000,
+            },
+            toolbar: [
+                'bold', 'italic', 'heading', '|',
+                'unordered-list', 'ordered-list', '|',
+                'link', 'image', '|',
+                'preview', 'side-by-side', 'fullscreen', '|',
+                'guide'
+            ],
+            placeholder: "# Template Title\n\nTemplate content goes here. Use *****input-box***** syntax to create input boxes.\n\nExample:\n\nHello, my name is *****name***** and I am *****age***** years old.",
+        });
+        
+        console.log("SimpleMDE initialized");
+        
+        // Get the form element
+        var form = document.getElementById('templateForm');
+        
+        // Add submit event listener to the form
+        form.addEventListener('submit', function(e) {
+            console.log("Form submit event triggered");
+            
+            // Stop the form from submitting immediately
+            e.preventDefault();
+            
+            // Update the content textarea with the SimpleMDE value
+            var contentMirror = document.getElementById('content-mirror');
+            var contentValue = editor.value();
+            
+            // Update both content fields to be safe
+            document.getElementById('content').value = contentValue;
+            contentMirror.value = contentValue;
+            
+            console.log("Content updated:", contentValue);
+            
+            // Now submit the form after a short delay
+            setTimeout(function() {
+                form.submit();
+                console.log("Form submitted");
+            }, 100);
+        });
+        
+        // Add a backup manual submit button handler
+        document.getElementById('manualSubmitBtn').addEventListener('click', function() {
+            console.log("Manual submit button clicked");
+            
+            // Update content and submit
+            document.getElementById('content').value = editor.value();
+            document.getElementById('content-mirror').value = editor.value();
+            
+            // Force direct submission
+            form.submit();
+            console.log("Form submitted manually");
+        });
+    });
+</script>
+{% endblock %}

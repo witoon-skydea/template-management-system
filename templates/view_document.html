@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% block title %}{{ document.title }} - Template Management System{% endblock %}
+
+{% block head %}
+<style>
+    .input-box-highlight {
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 3px;
+        padding: 2px 5px;
+        cursor: pointer;
+    }
+    
+    .input-box-highlight:hover {
+        background-color: #e9ecef;
+    }
+    
+    .modal-dialog {
+        max-width: 600px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h2>{{ document.title }}</h2>
+    <div>
+        <a href="{{ url_for('edit_document', document_id=document.id) }}" class="btn btn-primary">
+            <i class="fas fa-edit"></i> Edit
+        </a>
+        <a href="{{ url_for('export_docx', document_id=document.id) }}" class="btn btn-secondary">
+            <i class="fas fa-file-word"></i> Export DOCX
+        </a>
+        <a href="{{ url_for('export_txt', document_id=document.id) }}" class="btn btn-secondary">
+            <i class="fas fa-file-alt"></i> Export TXT
+        </a>
+        <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left"></i> Back
+        </a>
+    </div>
+</div>
+
+{% if document.description %}
+<p class="lead">{{ document.description }}</p>
+{% endif %}
+
+<div class="card mt-4">
+    <div class="card-header">
+        <ul class="nav nav-tabs card-header-tabs" id="document-tabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="preview-tab" data-bs-toggle="tab" data-bs-target="#preview" type="button" role="tab" aria-controls="preview" aria-selected="true">Document</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="template-tab" data-bs-toggle="tab" data-bs-target="#template" type="button" role="tab" aria-controls="template" aria-selected="false">Template Info</button>
+            </li>
+        </ul>
+    </div>
+    <div class="card-body">
+        <div class="tab-content" id="document-tab-content">
+            <div class="tab-pane fade show active" id="preview" role="tabpanel" aria-labelledby="preview-tab">
+                <div class="markdown-content">
+                    {{ html_content|safe }}
+                </div>
+            </div>
+            <div class="tab-pane fade" id="template" role="tabpanel" aria-labelledby="template-tab">
+                <h5>Template Information</h5>
+                <p><strong>Title:</strong> {{ document.template.title }}</p>
+                {% if document.template.description %}
+                <p><strong>Description:</strong> {{ document.template.description }}</p>
+                {% endif %}
+                
+                <h5 class="mt-4">Input Values</h5>
+                {% if input_boxes %}
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Label</th>
+                                <th>Value</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for box in input_boxes %}
+                            <tr>
+                                <td>{{ box.label }}</td>
+                                <td>{{ input_value_dict.get(box.id, {}).value or 'Empty' }}</td>
+                                <td>
+                                    <button class="btn btn-sm btn-primary edit-input-btn" data-box-id="{{ box.id }}" data-box-label="{{ box.label }}" data-value="{{ input_value_dict.get(box.id, {}).value or '' }}">
+                                        <i class="fas fa-edit"></i> Edit
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p>No input boxes found in this template.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Input Edit Modal -->
+<div class="modal fade" id="editInputModal" tabindex="-1" aria-labelledby="editInputModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editInputModalLabel">Edit Input</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editInputForm">
+                    <input type="hidden" id="inputBoxId" name="inputBoxId">
+                    <div class="mb-3">
+                        <label for="inputLabel" class="form-label">Input Label</label>
+                        <input type="text" class="form-control" id="inputLabel" readonly>
+                    </div>
+                    <div class="mb-3">
+                        <label for="inputValue" class="form-label">Value</label>
+                        <textarea class="form-control" id="inputValue" name="inputValue" rows="5"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="saveInputBtn">Save changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Setup edit input buttons
+        const editButtons = document.querySelectorAll('.edit-input-btn');
+        const editModal = new bootstrap.Modal(document.getElementById('editInputModal'));
+        
+        editButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const boxId = this.getAttribute('data-box-id');
+                const boxLabel = this.getAttribute('data-box-label');
+                const value = this.getAttribute('data-value');
+                
+                document.getElementById('inputBoxId').value = boxId;
+                document.getElementById('inputLabel').value = boxLabel;
+                document.getElementById('inputValue').value = value;
+                
+                editModal.show();
+            });
+        });
+        
+        // Setup save button
+        document.getElementById('saveInputBtn').addEventListener('click', function() {
+            const boxId = document.getElementById('inputBoxId').value;
+            const value = document.getElementById('inputValue').value;
+            
+            // Send API request to update input value
+            fetch(`/api/input_value/{{ document.id }}/${boxId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ value: value })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // Close modal
+                    editModal.hide();
+                    
+                    // Reload page to show updated content
+                    window.location.reload();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('An error occurred while saving the input value.');
+            });
+        });
+    });
+</script>
+{% endblock %}

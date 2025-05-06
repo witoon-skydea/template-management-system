@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block title %}{{ template.title }} - Template Management System{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h2>{{ template.title }}</h2>
+    <div>
+        <a href="{{ url_for('edit_template', template_id=template.id) }}" class="btn btn-primary">
+            <i class="fas fa-edit"></i> Edit
+        </a>
+        <a href="{{ url_for('create_document', template_id=template.id) }}" class="btn btn-success">
+            <i class="fas fa-file-alt"></i> Create Document
+        </a>
+        <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Back
+        </a>
+    </div>
+</div>
+
+{% if template.description %}
+<p class="lead">{{ template.description }}</p>
+{% endif %}
+
+<div class="card mt-4">
+    <div class="card-header">
+        <ul class="nav nav-tabs card-header-tabs" id="template-tabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="preview-tab" data-bs-toggle="tab" data-bs-target="#preview" type="button" role="tab" aria-controls="preview" aria-selected="true">Preview</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="markdown-tab" data-bs-toggle="tab" data-bs-target="#markdown" type="button" role="tab" aria-controls="markdown" aria-selected="false">Markdown</button>
+            </li>
+        </ul>
+    </div>
+    <div class="card-body">
+        <div class="tab-content" id="template-tab-content">
+            <div class="tab-pane fade show active" id="preview" role="tabpanel" aria-labelledby="preview-tab">
+                <div class="markdown-content">
+                    {{ html_content|safe }}
+                </div>
+            </div>
+            <div class="tab-pane fade" id="markdown" role="tabpanel" aria-labelledby="markdown-tab">
+                <pre class="bg-light p-3"><code>{{ template.content }}</code></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card mt-4">
+    <div class="card-header">
+        <h5>Input Boxes</h5>
+    </div>
+    <div class="card-body">
+        {% if template.input_boxes %}
+        <div class="table-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Box ID</th>
+                        <th>Label</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for box in template.input_boxes %}
+                    <tr>
+                        <td><code>{{ box.box_id }}</code></td>
+                        <td>{{ box.label }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p>No input boxes found in this template.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,123 @@
+/* Custom styles for Template Management System */
+
+body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+footer {
+    margin-top: auto;
+}
+
+/* Dashboard cards */
+.card {
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.card-header {
+    background-color: #f8f9fa;
+    font-weight: 500;
+}
+
+/* Template and Document list */
+.list-group-item {
+    transition: all 0.2s ease;
+}
+
+.list-group-item:hover {
+    background-color: #f8f9fa;
+}
+
+/* Markdown content styling */
+.markdown-content {
+    line-height: 1.6;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+    margin-top: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+.markdown-content p {
+    margin-bottom: 1rem;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+    margin-bottom: 1rem;
+    padding-left: 2rem;
+}
+
+.markdown-content blockquote {
+    padding: 0.5rem 1rem;
+    margin-bottom: 1rem;
+    border-left: 4px solid #dee2e6;
+    background-color: #f8f9fa;
+}
+
+.markdown-content pre {
+    padding: 1rem;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+    overflow: auto;
+    margin-bottom: 1rem;
+}
+
+.markdown-content code {
+    padding: 0.2rem 0.4rem;
+    background-color: #f8f9fa;
+    border-radius: 3px;
+}
+
+.markdown-content img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Templates and Documents view */
+.actions-column {
+    width: 200px;
+    text-align: right;
+}
+
+/* Input highlighting in document view */
+.input-highlight {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 3px;
+    padding: 2px 5px;
+    cursor: pointer;
+}
+
+.input-highlight:hover {
+    background-color: #e9ecef;
+}
+
+/* SimpleMDE Custom Styles */
+.CodeMirror {
+    height: 400px !important;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+}
+
+.editor-toolbar {
+    border: 1px solid #dee2e6;
+    border-radius: 4px 4px 0 0;
+}
+
+/* Custom alert styling */
+.alert {
+    margin-bottom: 20px;
+}
+
+/* Custom button styling */
+.btn-sm {
+    margin-right: 5px;
+}

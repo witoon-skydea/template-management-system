@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Template - Template Management System{% endblock %}
+
+{% block head %}
+<!-- SimpleMDE - Markdown Editor -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/simplemde/latest/simplemde.min.css">
+<style>
+    .editor-toolbar button {
+        color: #333;
+    }
+    .editor-toolbar.fullscreen {
+        z-index: 1030;
+    }
+    .CodeMirror-fullscreen {
+        z-index: 1020;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h2>Edit Template</h2>
+    <div>
+        <a href="{{ url_for('view_template', template_id=template.id) }}" class="btn btn-secondary">
+            <i class="fas fa-times"></i> Cancel
+        </a>
+    </div>
+</div>
+
+<div class="card mt-4">
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('edit_template', template_id=template.id) }}">
+            <div class="mb-3">
+                <label for="title" class="form-label">Title</label>
+                <input type="text" class="form-control" id="title" name="title" value="{{ template.title }}" required>
+            </div>
+            <div class="mb-3">
+                <label for="description" class="form-label">Description</label>
+                <textarea class="form-control" id="description" name="description" rows="2">{{ template.description or '' }}</textarea>
+            </div>
+            <div class="mb-3">
+                <label for="content" class="form-label">Content</label>
+                <textarea class="form-control" id="content" name="content" rows="10" required>{{ template.content }}</textarea>
+                <div class="form-text mt-2">
+                    Use markdown syntax for formatting. To create an input box, use the syntax: *****input-box***** 
+                    where "input-box" is a unique identifier for the input box.
+                </div>
+            </div>
+            <button type="submit" class="btn btn-primary">Save Changes</button>
+        </form>
+    </div>
+</div>
+
+<div class="card mt-4">
+    <div class="card-header">
+        <h5>Template Editing Guide</h5>
+    </div>
+    <div class="card-body">
+        <h6>Markdown Formatting</h6>
+        <ul>
+            <li><code># Heading 1</code> - Creates a large heading</li>
+            <li><code>## Heading 2</code> - Creates a medium heading</li>
+            <li><code>### Heading 3</code> - Creates a small heading</li>
+            <li><code>**bold text**</code> - Makes text bold</li>
+            <li><code>*italic text*</code> - Makes text italic</li>
+            <li><code>[link text](url)</code> - Creates a link</li>
+            <li><code>- item</code> - Creates a bullet point</li>
+        </ul>
+        
+        <h6>Input Box Syntax</h6>
+        <p>To create an input box, use the following syntax:</p>
+        <pre><code>*****input-box-name*****</code></pre>
+        <p>Where "input-box-name" is a unique identifier for the input box. For example:</p>
+        <pre><code>Hello, my name is *****name***** and I am *****age***** years old.</code></pre>
+        <p>This creates two input boxes with identifiers "name" and "age".</p>
+        
+        <div class="alert alert-warning mt-3">
+            <strong>Note:</strong> Changing input box identifiers will affect any documents created from this template!
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- SimpleMDE - Markdown Editor -->
+<script src="https://cdn.jsdelivr.net/simplemde/latest/simplemde.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        var editor = new SimpleMDE({
+            element: document.getElementById('content'),
+            spellChecker: false,
+            autosave: {
+                enabled: true,
+                uniqueId: 'template_editor_{{ template.id }}',
+                delay: 1000,
+            },
+            toolbar: [
+                'bold', 'italic', 'heading', '|',
+                'unordered-list', 'ordered-list', '|',
+                'link', 'image', '|',
+                'preview', 'side-by-side', 'fullscreen', '|',
+                'guide'
+            ]
+        });
+        
+        // Fix for form submission
+        document.querySelector('form').addEventListener('submit', function(e) {
+            // Update the content textarea with the SimpleMDE value before submitting
+            document.getElementById('content').value = editor.value();
+        });
+    });
+</script>
+{% endblock %}

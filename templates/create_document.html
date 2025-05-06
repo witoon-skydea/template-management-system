@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Create Document - Template Management System{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center">
+    <h2>Create Document from Template</h2>
+    <div>
+        <a href="{{ url_for('view_template', template_id=template.id) }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Template
+        </a>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5>Template Information</h5>
+            </div>
+            <div class="card-body">
+                <h5 class="card-title">{{ template.title }}</h5>
+                {% if template.description %}
+                <p class="card-text">{{ template.description }}</p>
+                {% endif %}
+                <p><small class="text-muted">Created on {{ template.created_at.strftime('%Y-%m-%d') }}</small></p>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5>Create Document</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('create_document', template_id=template.id) }}">
+                    <div class="mb-3">
+                        <label for="title" class="form-label">Document Title</label>
+                        <input type="text" class="form-control" id="title" name="title" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Document Description</label>
+                        <textarea class="form-control" id="description" name="description" rows="2"></textarea>
+                    </div>
+                    
+                    <h5 class="mt-4">Input Values</h5>
+                    
+                    {% if input_boxes %}
+                    <div class="list-group mb-3">
+                        {% for input_box in input_boxes %}
+                        <div class="list-group-item">
+                            <div class="mb-3">
+                                <label for="input_{{ input_box.id }}" class="form-label">{{ input_box.label }}</label>
+                                <textarea class="form-control" id="input_{{ input_box.id }}" name="input_{{ input_box.id }}" rows="2">{{ input_box.default_value or '' }}</textarea>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <div class="alert alert-info">
+                        This template does not have any input boxes.
+                    </div>
+                    {% endif %}
+                    
+                    <button type="submit" class="btn btn-primary">Create Document</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

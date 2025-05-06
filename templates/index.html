@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="jumbotron text-center">
+    <h1 class="display-4">Welcome to Template Management System</h1>
+    <p class="lead">Create, manage, and export markdown templates with editable components</p>
+    <hr class="my-4">
+    <p>Start creating your templates and documents today</p>
+    {% if not current_user.is_authenticated %}
+    <a class="btn btn-primary btn-lg" href="{{ url_for('login') }}" role="button">Login</a>
+    {% else %}
+    <a class="btn btn-primary btn-lg" href="{{ url_for('dashboard') }}" role="button">Go to Dashboard</a>
+    {% endif %}
+</div>
+
+<div class="row mt-5">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title"><i class="fas fa-file-alt"></i> Create Templates</h5>
+                <p class="card-text">Create markdown templates with special input boxes that can be edited later.</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title"><i class="fas fa-edit"></i> Generate Documents</h5>
+                <p class="card-text">Use templates to create documents with customized content.</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title"><i class="fas fa-file-export"></i> Export to Various Formats</h5>
+                <p class="card-text">Export your documents to DOCX or TXT for easy sharing.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
