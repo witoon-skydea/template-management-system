@@ -17,6 +17,7 @@ class User(Base, UserMixin):
     password_hash = Column(String(200), nullable=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
     
     # Relationships
     templates = relationship("Template", back_populates="creator")
@@ -102,7 +103,11 @@ class Document(Base):
         template_content = self.template.content
         
         # Create a dictionary of box_id to value for easy replacement
-        input_values_dict = {value.input_box.box_id: value.value for value in self.input_values}
+        # Skip any input values where input_box is None
+        input_values_dict = {}
+        for value in self.input_values:
+            if value.input_box is not None:
+                input_values_dict[value.input_box.box_id] = value.value
         
         # Replace all input box placeholders with their values
         for box_id, value in input_values_dict.items():

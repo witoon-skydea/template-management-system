@@ -27,7 +27,8 @@ def setup_database():
     admin_user = User(
         username="admin",
         email="admin@example.com",
-        password_hash=pbkdf2_sha256.hash("admin123")
+        password_hash=pbkdf2_sha256.hash("admin123"),
+        is_admin=True
     )
     
     session.add(admin_user)
