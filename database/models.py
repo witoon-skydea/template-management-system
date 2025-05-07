@@ -25,6 +25,7 @@ class StationUserRole(enum.Enum):
 class ChatChannelType(enum.Enum):
     GENERAL = 'general'
     STATION = 'station'
+    DIRECT = 'direct'
 
 # Station model for organizing templates and users
 class Station(Base):
@@ -63,25 +64,48 @@ class StationUser(Base):
         return f"<StationUser(station_id={self.station_id}, user_id={self.user_id}, role='{self.role}')>"
 
 # Notification model for system messages
-# Chat Channel model for general and station-specific chat
+# Chat Channel model for general, station-specific, and direct message chats
 class ChatChannel(Base):
     __tablename__ = 'chat_channels'
     
     id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
-    channel_type = Column(String(20), nullable=False)  # 'general' or 'station'
+    channel_type = Column(String(20), nullable=False)  # 'general', 'station', or 'direct'
     station_id = Column(Integer, ForeignKey('stations.id'), nullable=True)  # Only for station channels
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
     # Relationships
     station = relationship("Station", back_populates="chat_channels")
     messages = relationship("ChatMessage", back_populates="channel", cascade="all, delete-orphan")
+    direct_message_link = relationship("DirectMessageChannel", back_populates="channel", uselist=False)
     
     def __repr__(self):
         if self.channel_type == ChatChannelType.GENERAL.value:
             return f"<ChatChannel(name='{self.name}', type='general')>"
-        else:
+        elif self.channel_type == ChatChannelType.STATION.value:
             return f"<ChatChannel(name='{self.name}', type='station', station_id={self.station_id})>"
+        else:
+            return f"<ChatChannel(name='{self.name}', type='direct')>"
+
+
+# Model for direct message channels linking two users
+class DirectMessageChannel(Base):
+    __tablename__ = 'direct_message_channels'
+    
+    id = Column(Integer, primary_key=True)
+    channel_id = Column(Integer, ForeignKey('chat_channels.id'), nullable=False, unique=True)
+    user1_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    user2_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_activity = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    # Relationships
+    channel = relationship("ChatChannel", back_populates="direct_message_link")
+    user1 = relationship("User", foreign_keys=[user1_id], back_populates="direct_channels_as_user1")
+    user2 = relationship("User", foreign_keys=[user2_id], back_populates="direct_channels_as_user2")
+    
+    def __repr__(self):
+        return f"<DirectMessageChannel(id={self.id}, user1_id={self.user1_id}, user2_id={self.user2_id})>"
 
 # Chat Message model for storing messages
 class ChatMessage(Base):
@@ -97,9 +121,27 @@ class ChatMessage(Base):
     # Relationships
     channel = relationship("ChatChannel", back_populates="messages")
     sender = relationship("User", back_populates="chat_messages")
+    read_statuses = relationship("ChatMessageReadStatus", back_populates="message", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<ChatMessage(id={self.id}, sender_id={self.sender_id})>"
+
+
+class ChatMessageReadStatus(Base):
+    __tablename__ = 'chat_message_read_statuses'
+    
+    id = Column(Integer, primary_key=True)
+    message_id = Column(Integer, ForeignKey('chat_messages.id'), nullable=False)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    is_read = Column(Boolean, default=False)
+    read_at = Column(DateTime, nullable=True)
+    
+    # Relationships
+    message = relationship("ChatMessage", back_populates="read_statuses")
+    user = relationship("User", back_populates="message_read_statuses")
+    
+    def __repr__(self):
+        return f"<ChatMessageReadStatus(message_id={self.message_id}, user_id={self.user_id}, is_read={self.is_read})>"
 
 class Notification(Base):
     __tablename__ = 'notifications'
@@ -155,6 +197,19 @@ class User(Base, UserMixin):
     notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
     user_stations = relationship("StationUser", back_populates="user", cascade="all, delete-orphan")
     chat_messages = relationship("ChatMessage", back_populates="sender")
+    message_read_statuses = relationship("ChatMessageReadStatus", back_populates="user", cascade="all, delete-orphan")
+    
+    # Direct message channels where this user is the first participant
+    direct_channels_as_user1 = relationship("DirectMessageChannel", 
+                                           foreign_keys="DirectMessageChannel.user1_id",
+                                           back_populates="user1",
+                                           cascade="all, delete-orphan")
+    
+    # Direct message channels where this user is the second participant
+    direct_channels_as_user2 = relationship("DirectMessageChannel", 
+                                           foreign_keys="DirectMessageChannel.user2_id",
+                                           back_populates="user2",
+                                           cascade="all, delete-orphan")
     
     def get_id(self):
         return str(self.id)

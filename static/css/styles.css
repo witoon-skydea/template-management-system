@@ -121,3 +121,94 @@ footer {
 .btn-sm {
     margin-right: 5px;
 }
+
+/* Chat styling */
+.chat-container {
+    height: 60vh;
+    overflow-y: auto;
+    background-color: #f8f9fa;
+    border-radius: 0.25rem;
+    padding: 1rem;
+    border: 1px solid #dee2e6;
+}
+
+.message-input-container {
+    background-color: #f8f9fa;
+    border-top: 2px solid #0d6efd;
+    padding: 15px;
+    border-bottom-left-radius: 0.25rem;
+    border-bottom-right-radius: 0.25rem;
+    box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+}
+
+.chat-message {
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: 0.5rem;
+    max-width: 80%;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.message-own {
+    background-color: #d1ecf1;
+    margin-left: auto;
+    border-bottom-right-radius: 0;
+}
+
+.message-other {
+    background-color: #ffffff;
+    border: 1px solid #dee2e6;
+    border-bottom-left-radius: 0;
+}
+
+.message-system {
+    background-color: #fff3cd;
+    width: 100%;
+    text-align: center;
+    font-style: italic;
+}
+
+.message-sender {
+    font-weight: bold;
+    margin-bottom: 0.25rem;
+    color: #495057;
+}
+
+.message-time {
+    font-size: 0.75rem;
+    color: #6c757d;
+    text-align: right;
+    margin-top: 5px;
+}
+
+#messageInput {
+    border: 2px solid #ced4da;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+    font-size: 1.1rem;
+    padding: 12px;
+    height: auto;
+}
+
+#messageInput:focus {
+    border-color: #80bdff;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* Chat dashboard styling */
+.chat-channel-card {
+    transition: all 0.2s ease;
+    border: 1px solid #dee2e6;
+}
+
+.chat-channel-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.station-channel-card {
+    border-left: 4px solid #28a745;
+}
+
+.station-channel-card:hover .btn {
+    background-color: #218838;
+}

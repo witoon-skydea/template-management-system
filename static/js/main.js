@@ -7,6 +7,9 @@ document.addEventListener('DOMContentLoaded', function() {
         return new bootstrap.Tooltip(tooltipTriggerEl);
     });
     
+    // Initialize chat functionality if on chat page
+    initializeChatFunctions();
+    
     // Auto-dismiss alerts after 5 seconds
     setTimeout(function() {
         var alerts = document.querySelectorAll('.alert:not(.alert-important)');
@@ -68,6 +71,50 @@ function highlightCodeBlocks() {
 // Call highlight function if needed
 if (document.querySelector('pre code')) {
     highlightCodeBlocks();
+}
+
+// Chat functionality
+function initializeChatFunctions() {
+    const chatContainer = document.getElementById('chatContainer');
+    const messageForm = document.getElementById('messageForm');
+    const messageInput = document.getElementById('messageInput');
+    
+    // If not on a chat page, exit early
+    if (!chatContainer) return;
+    
+    // Scroll chat to bottom on page load
+    scrollChatToBottom();
+    
+    // Focus on message input
+    if (messageInput) {
+        messageInput.focus();
+    }
+    
+    // Add event listener for form submission
+    if (messageForm) {
+        messageForm.addEventListener('submit', function() {
+            // Temporarily disable the button to prevent double submissions
+            const submitButton = this.querySelector('button[type="submit"]');
+            if (submitButton) {
+                submitButton.disabled = true;
+                submitButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
+                
+                // Re-enable after a short delay in case form doesn't submit
+                setTimeout(() => {
+                    submitButton.disabled = false;
+                    submitButton.innerHTML = '<i class="fas fa-paper-plane"></i> Send';
+                }, 3000);
+            }
+        });
+    }
+}
+
+// Function to scroll chat to bottom
+function scrollChatToBottom() {
+    const chatContainer = document.getElementById('chatContainer');
+    if (chatContainer) {
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
 }
 
 // Initialize multi-user selection functionality

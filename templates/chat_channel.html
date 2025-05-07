@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ channel.name }} - Chat{% endblock %}
+{% block title %}{{ channel.name|default('Chat Channel') }} - Chat{% endblock %}
 
 {% block styles %}
 <style>
@@ -81,9 +81,9 @@
             </div>
             <div class="card-body p-2 channel-sidebar">
                 {% if general_channel %}
-                <div class="channel-item {% if current_channel_id == general_channel.id %}active{% endif %}">
-                    <a href="{{ url_for('view_chat_channel', channel_id=general_channel.id) }}" class="text-decoration-none {% if current_channel_id == general_channel.id %}text-white{% endif %}">
-                        <i class="fas fa-globe-americas"></i> {{ general_channel.name }}
+                <div class="channel-item {% if current_channel_id == general_channel['id'] %}active{% endif %}">
+                    <a href="{{ url_for('view_chat_channel', channel_id=general_channel['id']) }}" class="text-decoration-none {% if current_channel_id == general_channel['id'] %}text-white{% endif %}">
+                        <i class="fas fa-globe-americas"></i> {{ general_channel['name'] }}
                     </a>
                 </div>
                 {% endif %}
@@ -93,12 +93,30 @@
                 </div>
                 
                 {% for station_channel in station_channels %}
-                <div class="channel-item {% if current_channel_id == station_channel.id %}active{% endif %}">
-                    <a href="{{ url_for('view_chat_channel', channel_id=station_channel.id) }}" class="text-decoration-none {% if current_channel_id == station_channel.id %}text-white{% endif %}">
-                        <i class="fas fa-building"></i> {{ station_channel.name }}
+                <div class="channel-item {% if current_channel_id == station_channel['id'] %}active{% endif %}">
+                    <a href="{{ url_for('view_chat_channel', channel_id=station_channel['id']) }}" class="text-decoration-none {% if current_channel_id == station_channel['id'] %}text-white{% endif %}">
+                        <i class="fas fa-building"></i> {{ station_channel['name'] }}
                     </a>
                 </div>
                 {% endfor %}
+                
+                <div class="mt-3 mb-2">
+                    <strong>Direct Messages</strong>
+                </div>
+                
+                {% for direct_channel in direct_channels %}
+                <div class="channel-item {% if current_channel_id == direct_channel['id'] %}active{% endif %}">
+                    <a href="{{ url_for('view_chat_channel', channel_id=direct_channel['id']) }}" class="text-decoration-none {% if current_channel_id == direct_channel['id'] %}text-white{% endif %}">
+                        <i class="fas fa-user"></i> {{ direct_channel['name'] }}
+                    </a>
+                </div>
+                {% endfor %}
+                
+                <div class="mt-2 mb-3">
+                    <a href="{{ url_for('list_users_for_direct_message') }}" class="btn btn-outline-primary btn-sm w-100">
+                        <i class="fas fa-plus"></i> New Direct Message
+                    </a>
+                </div>
                 
                 <div class="mt-3">
                     <a href="{{ url_for('chat_dashboard') }}" class="btn btn-outline-secondary btn-sm w-100">
@@ -113,19 +131,35 @@
     <div class="col-md-9">
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center 
-                         {% if channel.channel_type == 'general' %}bg-primary{% else %}bg-success{% endif %} text-white">
-                <h4 class="mb-0">{{ channel.name }}</h4>
+                         {% if channel.channel_type == 'general' %}bg-primary
+                         {% elif channel.channel_type == 'station' %}bg-success
+                         {% else %}bg-info{% endif %} text-white">
+                <h4 class="mb-0">
+                    {% if channel.channel_type == 'general' %}
+                        <i class="fas fa-globe-americas me-2"></i>
+                    {% elif channel.channel_type == 'station' %}
+                        <i class="fas fa-building me-2"></i>
+                    {% else %}
+                        <i class="fas fa-user me-2"></i>
+                    {% endif %}
+                    {{ channel.name|default('Chat Channel') }}
+                </h4>
                 <div>
-                    {% if channel.channel_type == 'station' and channel.station %}
+                    {% if channel.channel_type == 'station' and channel.station_id %}
                     <a href="{{ url_for('view_station', station_id=channel.station_id) }}" class="btn btn-outline-light btn-sm">
                         <i class="fas fa-building"></i> View Station
+                    </a>
+                    {% elif channel.channel_type == 'direct' and other_user %}
+                    <a href="{{ url_for('list_users_for_direct_message') }}" class="btn btn-outline-light btn-sm">
+                        <i class="fas fa-comments"></i> Direct Message
                     </a>
                     {% endif %}
                 </div>
             </div>
             <div class="card-body p-0">
+                <!-- Chat messages container with fixed height -->
                 <div class="chat-container" id="chatContainer">
-                    {% if messages %}
+                {% if messages %}
                         {% for message in messages %}
                             <div class="chat-message 
                                      {% if message.sender_id == current_user.id %}message-own{% 
@@ -155,16 +189,27 @@
                     {% endif %}
                 </div>
                 
-                <form id="messageForm" action="{{ url_for('send_chat_message', channel_id=channel.id) }}" method="POST" class="px-3 pb-3">
-                    <div class="input-group">
-                        <input type="text" name="message" id="messageInput" class="form-control" 
-                               placeholder="Type your message..." required autofocus>
-                        <button type="submit" class="btn 
-                                {% if channel.channel_type == 'general' %}btn-primary{% else %}btn-success{% endif %}">
-                            <i class="fas fa-paper-plane"></i> Send
-                        </button>
+                <!-- Prominent message input form with clear visual separation -->
+                <div class="message-input-container mt-3 p-3 border-top bg-light">
+                    <div class="alert alert-info mb-3">
+                        <i class="fas fa-info-circle"></i> You are chatting in <strong>{{ channel.name|default('Chat Channel') }}</strong>. Type your message below and click Send to communicate with other users.
                     </div>
-                </form>
+                    <form id="messageForm" action="{{ url_for('send_chat_message', channel_id=channel.id) }}" method="POST">
+                        <div class="input-group input-group-lg">
+                            <span class="input-group-text bg-white">
+                                <i class="fas fa-keyboard fa-lg text-primary"></i>
+                            </span>
+                            <input type="text" name="message" id="messageInput" class="form-control form-control-lg border-primary" 
+                                   placeholder="Type your message here and press Send..." required autofocus>
+                            <button type="submit" class="btn btn-lg btn-primary px-4">
+                                <i class="fas fa-paper-plane"></i> Send Message
+                            </button>
+                        </div>
+                    </form>
+                    <div class="text-center mt-2">
+                        <small class="text-muted">Press Enter to send or click the Send button</small>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Direct Message Users - Template Management System{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <h3 class="mb-0">Start a Direct Message</h3>
+                    <a href="{{ url_for('chat_dashboard') }}" class="btn btn-outline-light">
+                        <i class="fas fa-arrow-left"></i> Back to Chat
+                    </a>
+                </div>
+                <div class="card-body">
+                    <p class="lead">Select a user to start or continue a direct message conversation:</p>
+                    
+                    {% if users %}
+                        <div class="list-group">
+                            {% for user in users %}
+                                <a href="{{ url_for('create_direct_message_channel', user_id=user.id) }}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <i class="fas fa-user me-2"></i>
+                                        <strong>{{ user.username }}</strong>
+                                        <small class="text-muted ms-2">{{ user.email }}</small>
+                                    </div>
+                                    <span class="badge bg-primary rounded-pill">
+                                        <i class="fas fa-comment-dots"></i> Message
+                                    </span>
+                                </a>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle"></i> There are no users you can message directly. You can only message users who share a station with you.
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

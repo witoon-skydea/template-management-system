@@ -17,7 +17,7 @@ from sqlalchemy import and_, or_, desc
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sqlalchemy.orm import joinedload
-from database.models import init_db, get_session, User, Template, InputBox, Document, DocumentInputValue, TemplateAssignment, Notification, Station, StationUser, StationUserRole, ChatChannel, ChatMessage, ChatChannelType
+from database.models import init_db, get_session, User, Template, InputBox, Document, DocumentInputValue, TemplateAssignment, Notification, Station, StationUser, StationUserRole, ChatChannel, ChatMessage, ChatChannelType, DirectMessageChannel, ChatMessageReadStatus
 
 # Configure application
 app = Flask(__name__, 
@@ -25,9 +25,63 @@ app = Flask(__name__,
             template_folder=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates"))
 app.config['SECRET_KEY'] = 'template-management-secret-key'
 
+# Add Markdown filter for Jinja templates
+@app.template_filter('markdown')
+def markdown_filter(text):
+    return markdown.markdown(text, extensions=[
+        'markdown.extensions.extra',
+        'markdown.extensions.codehilite',
+        'markdown.extensions.nl2br',
+        'markdown.extensions.sane_lists',
+        'markdown.extensions.smarty',
+        'markdown.extensions.tables',
+    ])
+
 # Configure database
 db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "database", "template_management.db")
 engine = init_db(db_path)
+
+# Initialize chat channels if they don't exist
+def init_chat_channels():
+    """Initialize chat channels if they don't exist"""
+    db_session = get_session(engine)
+    
+    # Create general chat channel if it doesn't exist
+    general_channel = db_session.query(ChatChannel).filter_by(
+        channel_type=ChatChannelType.GENERAL.value
+    ).first()
+    
+    if not general_channel:
+        general_channel = ChatChannel(
+            name="General Chat",
+            channel_type=ChatChannelType.GENERAL.value
+        )
+        db_session.add(general_channel)
+        print("Created General Chat channel")
+    
+    # Create station chat channels for existing stations
+    stations = db_session.query(Station).all()
+    for station in stations:
+        # Check if station already has a channel
+        station_channel = db_session.query(ChatChannel).filter_by(
+            channel_type=ChatChannelType.STATION.value,
+            station_id=station.id
+        ).first()
+        
+        if not station_channel:
+            station_channel = ChatChannel(
+                name=f"{station.name} Chat",
+                channel_type=ChatChannelType.STATION.value,
+                station_id=station.id
+            )
+            db_session.add(station_channel)
+            print(f"Created chat channel for station: {station.name}")
+    
+    db_session.commit()
+    db_session.close()
+
+# Run chat channel initialization
+init_chat_channels()
 
 # Configure login
 login_manager = LoginManager()
@@ -1351,9 +1405,23 @@ def create_document(template_id):
         flash('Document created successfully', 'success')
         return redirect(url_for('view_document', document_id=document.id))
     
+    # Generate HTML content with interactive input boxes for preview
+    # Create empty input values for rendering
+    temp_input_values = []
+    for box in input_boxes:
+        temp_value = DocumentInputValue(
+            document_id=0,  # Temporary ID
+            input_box_id=box.id,
+            value=box.default_value or ""
+        )
+        temp_input_values.append(temp_value)
+    
+    # Use the markdown_to_html function to render the template with input boxes
+    html_content = markdown_to_html(template.content, input_boxes, temp_input_values, document_id=0)
+    
     db_session.close()
     
-    return render_template('create_document.html', template=template, input_boxes=input_boxes)
+    return render_template('create_document.html', template=template, input_boxes=input_boxes, html_content=html_content)
 
 @app.route('/documents/<int:document_id>')
 @login_required
@@ -1943,7 +2011,7 @@ def mark_all_notifications_read():
     
     return redirect(url_for('view_notifications'))
 
-# Chat Routes
+# Chat Routes - Fully Refactored to Prevent DetachedInstanceError
 @app.route('/chat')
 @login_required
 def chat_dashboard():
@@ -1989,13 +2057,30 @@ def chat_dashboard():
         ).first()
         
         if channel:
-            # Get last message time and username for preview
-            last_message = db_session.query(ChatMessage).filter_by(
+            # Get last message time and username for preview with eager loading
+            last_message = db_session.query(ChatMessage).options(
+                joinedload(ChatMessage.sender)
+            ).filter_by(
                 channel_id=channel.id
             ).order_by(desc(ChatMessage.created_at)).first()
             
             last_message_time = last_message.created_at if last_message else None
             last_message_sender = last_message.sender.username if last_message and not last_message.is_system_message else "System"
+            
+            # Get unread message count
+            unread_count = db_session.query(ChatMessage).join(
+                ChatMessageReadStatus, 
+                and_(
+                    ChatMessageReadStatus.message_id == ChatMessage.id,
+                    ChatMessageReadStatus.user_id == current_user.id,
+                    ChatMessageReadStatus.is_read == False
+                ),
+                isouter=True
+            ).filter(
+                ChatMessage.channel_id == channel.id,
+                ChatMessage.sender_id != current_user.id,
+                ChatMessageReadStatus.id == None
+            ).count()
             
             station_channels.append({
                 'id': channel.id,
@@ -2003,28 +2088,244 @@ def chat_dashboard():
                 'station_id': station['id'],
                 'station_name': station['name'],
                 'last_message_time': last_message_time,
-                'last_message_sender': last_message_sender
+                'last_message_sender': last_message_sender,
+                'unread_count': unread_count
             })
     
-    # Get last message for general channel
+    # Get last message for general channel (with eager loading)
     last_general_message = None
     last_general_sender = None
+    general_unread_count = 0
+    
     if general_channel:
-        last_message = db_session.query(ChatMessage).filter_by(
+        last_message = db_session.query(ChatMessage).options(
+            joinedload(ChatMessage.sender)
+        ).filter_by(
             channel_id=general_channel.id
         ).order_by(desc(ChatMessage.created_at)).first()
         
         if last_message:
             last_general_message = last_message.created_at
             last_general_sender = last_message.sender.username if not last_message.is_system_message else "System"
+        
+        # Get unread message count for general channel
+        general_unread_count = db_session.query(ChatMessage).join(
+            ChatMessageReadStatus, 
+            and_(
+                ChatMessageReadStatus.message_id == ChatMessage.id,
+                ChatMessageReadStatus.user_id == current_user.id,
+                ChatMessageReadStatus.is_read == False
+            ),
+            isouter=True
+        ).filter(
+            ChatMessage.channel_id == general_channel.id,
+            ChatMessage.sender_id != current_user.id,
+            ChatMessageReadStatus.id == None
+        ).count()
+    
+    # Get direct message channels for the current user
+    direct_channels = []
+    
+    # Get channels where user is user1
+    dm_channels_as_user1 = db_session.query(
+        ChatChannel, DirectMessageChannel, User
+    ).join(
+        DirectMessageChannel, ChatChannel.id == DirectMessageChannel.channel_id
+    ).join(
+        User, DirectMessageChannel.user2_id == User.id
+    ).filter(
+        DirectMessageChannel.user1_id == current_user.id,
+        ChatChannel.channel_type == ChatChannelType.DIRECT.value
+    ).all()
+    
+    # Get channels where user is user2
+    dm_channels_as_user2 = db_session.query(
+        ChatChannel, DirectMessageChannel, User
+    ).join(
+        DirectMessageChannel, ChatChannel.id == DirectMessageChannel.channel_id
+    ).join(
+        User, DirectMessageChannel.user1_id == User.id
+    ).filter(
+        DirectMessageChannel.user2_id == current_user.id,
+        ChatChannel.channel_type == ChatChannelType.DIRECT.value
+    ).all()
+    
+    # Process both sets of direct message channels
+    for channel, dm_link, other_user in dm_channels_as_user1 + dm_channels_as_user2:
+        # Get last message for this channel
+        last_message = db_session.query(ChatMessage).options(
+            joinedload(ChatMessage.sender)
+        ).filter_by(
+            channel_id=channel.id
+        ).order_by(desc(ChatMessage.created_at)).first()
+        
+        last_message_time = last_message.created_at if last_message else None
+        last_message_sender = last_message.sender.username if last_message and not last_message.is_system_message else "System"
+        
+        # Get unread message count
+        unread_count = db_session.query(ChatMessage).join(
+            ChatMessageReadStatus, 
+            and_(
+                ChatMessageReadStatus.message_id == ChatMessage.id,
+                ChatMessageReadStatus.user_id == current_user.id,
+                ChatMessageReadStatus.is_read == False
+            ),
+            isouter=True
+        ).filter(
+            ChatMessage.channel_id == channel.id,
+            ChatMessage.sender_id != current_user.id,
+            ChatMessageReadStatus.id == None
+        ).count()
+        
+        direct_channels.append({
+            'id': channel.id,
+            'name': f"Chat with {other_user.username}",
+            'other_user_id': other_user.id,
+            'other_user_name': other_user.username,
+            'last_message_time': last_message_time,
+            'last_message_sender': last_message_sender,
+            'unread_count': unread_count
+        })
     
     db_session.close()
     
     return render_template('chat_dashboard.html',
                           general_channel=general_channel,
                           station_channels=station_channels,
+                          direct_channels=direct_channels,
                           last_general_message=last_general_message,
-                          last_general_sender=last_general_sender)
+                          last_general_sender=last_general_sender,
+                          general_unread_count=general_unread_count)
+
+@app.route('/chat/direct/users')
+@login_required
+def list_users_for_direct_message():
+    """List users who can be messaged directly"""
+    db_session = get_session(engine)
+    
+    # Get all users who share a station with the current user
+    # Users who are in the same station can message each other
+    users_in_same_stations = db_session.query(User).join(
+        StationUser, User.id == StationUser.user_id
+    ).filter(
+        User.id != current_user.id,
+        User.is_active == True,
+        StationUser.station_id.in_(
+            db_session.query(StationUser.station_id).filter(
+                StationUser.user_id == current_user.id
+            )
+        )
+    ).distinct().all()
+    
+    # Admin can message any user
+    if current_user.is_admin:
+        all_active_users = db_session.query(User).filter(
+            User.id != current_user.id,
+            User.is_active == True
+        ).all()
+        
+        # Combine the lists and remove duplicates
+        user_ids = set()
+        users = []
+        
+        for user in all_active_users + users_in_same_stations:
+            if user.id not in user_ids:
+                users.append(user)
+                user_ids.add(user.id)
+    else:
+        users = users_in_same_stations
+    
+    db_session.close()
+    
+    return render_template('direct_message_users.html', users=users)
+
+@app.route('/chat/direct/create/<int:user_id>')
+@login_required
+def create_direct_message_channel(user_id):
+    """Create a direct message channel with another user"""
+    db_session = get_session(engine)
+    
+    # Get the target user
+    target_user = db_session.query(User).get(user_id)
+    
+    if not target_user or not target_user.is_active:
+        db_session.close()
+        flash('User not found or inactive', 'danger')
+        return redirect(url_for('chat_dashboard'))
+    
+    # Check if we already have a direct message channel with this user
+    existing_channel = db_session.query(DirectMessageChannel).filter(
+        or_(
+            and_(
+                DirectMessageChannel.user1_id == current_user.id,
+                DirectMessageChannel.user2_id == user_id
+            ),
+            and_(
+                DirectMessageChannel.user1_id == user_id,
+                DirectMessageChannel.user2_id == current_user.id
+            )
+        )
+    ).first()
+    
+    if existing_channel:
+        # Use the existing channel
+        channel_id = existing_channel.channel_id
+    else:
+        # Check if users share a station or current user is admin
+        can_message = current_user.is_admin
+        
+        if not can_message:
+            # Check if they share a station
+            user1_stations = db_session.query(StationUser.station_id).filter(
+                StationUser.user_id == current_user.id
+            ).all()
+            user1_station_ids = [s.station_id for s in user1_stations]
+            
+            user2_stations = db_session.query(StationUser).filter(
+                StationUser.user_id == user_id,
+                StationUser.station_id.in_(user1_station_ids)
+            ).first()
+            
+            can_message = user2_stations is not None
+        
+        if not can_message:
+            db_session.close()
+            flash('You cannot message this user', 'danger')
+            return redirect(url_for('chat_dashboard'))
+        
+        # Create a new chat channel
+        channel_name = f"Direct: {current_user.username} and {target_user.username}"
+        new_channel = ChatChannel(
+            name=channel_name,
+            channel_type=ChatChannelType.DIRECT.value
+        )
+        db_session.add(new_channel)
+        db_session.flush()  # To get the channel ID
+        
+        # Create the direct message link
+        dm_link = DirectMessageChannel(
+            channel_id=new_channel.id,
+            user1_id=current_user.id,
+            user2_id=user_id
+        )
+        db_session.add(dm_link)
+        
+        # Add a system message
+        system_message = ChatMessage(
+            channel_id=new_channel.id,
+            sender_id=current_user.id,
+            content=f"Direct message conversation started between {current_user.username} and {target_user.username}",
+            is_system_message=True
+        )
+        db_session.add(system_message)
+        
+        db_session.commit()
+        channel_id = new_channel.id
+    
+    db_session.close()
+    
+    # Redirect to the chat channel
+    return redirect(url_for('view_chat_channel', channel_id=channel_id))
 
 @app.route('/chat/channel/<int:channel_id>')
 @login_required
@@ -2032,15 +2333,34 @@ def view_chat_channel(channel_id):
     """View a chat channel and its messages"""
     db_session = get_session(engine)
     
-    # Get the channel
-    channel = db_session.query(ChatChannel).get(channel_id)
+    # Get the channel with all relationships and full data refresh
+    # This addresses the DetachedInstanceError by ensuring all attributes are loaded in the session
+    channel = db_session.query(ChatChannel).options(
+        joinedload(ChatChannel.station),
+        joinedload(ChatChannel.direct_message_link)
+    ).get(channel_id)
+    
+    # Make a copy of essential attributes to prevent DetachedInstanceError
+    if not channel:
+        db_session.close()
+        flash('Chat channel not found', 'danger')
+        return redirect(url_for('chat_dashboard'))
+    
+    # Always convert all channel data to dictionaries to prevent DetachedInstanceError
+    channel_data = {
+        'id': channel.id,
+        'name': channel.name,
+        'channel_type': channel.channel_type,
+        'station_id': channel.station_id,
+        'created_at': channel.created_at
+    }
     
     if not channel:
         db_session.close()
         flash('Chat channel not found', 'danger')
         return redirect(url_for('chat_dashboard'))
     
-    # Check permissions for station channels
+    # Check permissions for different channel types
     if channel.channel_type == ChatChannelType.STATION.value:
         # If this is a station channel, check if user is in the station
         if not current_user.is_admin:
@@ -2053,19 +2373,89 @@ def view_chat_channel(channel_id):
                 db_session.close()
                 flash('You do not have access to this chat channel', 'danger')
                 return redirect(url_for('chat_dashboard'))
+    elif channel.channel_type == ChatChannelType.DIRECT.value:
+        # If this is a direct message channel, check if user is one of the participants
+        dm_link = db_session.query(DirectMessageChannel).filter_by(
+            channel_id=channel.id
+        ).first()
+        
+        if not dm_link or (dm_link.user1_id != current_user.id and dm_link.user2_id != current_user.id):
+            db_session.close()
+            flash('You do not have access to this direct message channel', 'danger')
+            return redirect(url_for('chat_dashboard'))
     
-    # Get messages for this channel
-    messages = db_session.query(ChatMessage).filter_by(
+    # Get messages for this channel with eagerly loaded sender relationship
+    messages = db_session.query(ChatMessage).options(
+        joinedload(ChatMessage.sender)
+    ).filter_by(
         channel_id=channel.id
     ).order_by(ChatMessage.created_at.desc()).limit(100).all()
     
     # Reverse messages to show oldest first
     messages.reverse()
     
+    # Mark all messages in this channel as read for the current user
+    for message in messages:
+        if message.sender_id != current_user.id:  # Only mark messages from others as read
+            # Check if there's already a read status
+            read_status = db_session.query(ChatMessageReadStatus).filter_by(
+                message_id=message.id,
+                user_id=current_user.id
+            ).first()
+            
+            if read_status:
+                # Update existing status if not already read
+                if not read_status.is_read:
+                    read_status.is_read = True
+                    read_status.read_at = datetime.datetime.utcnow()
+            else:
+                # Create a new read status
+                new_status = ChatMessageReadStatus(
+                    message_id=message.id,
+                    user_id=current_user.id,
+                    is_read=True,
+                    read_at=datetime.datetime.utcnow()
+                )
+                db_session.add(new_status)
+    
+    # Convert message objects to dictionaries to prevent DetachedInstanceError
+    messages_dict = []
+    for message in messages:
+        sender_username = message.sender.username if message.sender else "Unknown"
+        messages_dict.append({
+            'id': message.id,
+            'sender_id': message.sender_id,
+            'sender': {'username': sender_username},
+            'content': message.content,
+            'created_at': message.created_at,
+            'is_system_message': message.is_system_message
+        })
+    
+    # Get direct message info if this is a direct message channel
+    other_user = None
+    if channel.channel_type == ChatChannelType.DIRECT.value and channel.direct_message_link:
+        dm_link = channel.direct_message_link
+        # Get the other user in the conversation
+        if dm_link.user1_id == current_user.id:
+            other_user = db_session.query(User).get(dm_link.user2_id)
+        else:
+            other_user = db_session.query(User).get(dm_link.user1_id)
+    
     # Get user's available channels for the sidebar
-    general_channel = db_session.query(ChatChannel).filter_by(
+    # Ensure general_channel is converted to a dictionary to prevent DetachedInstanceError
+    general_channel_obj = db_session.query(ChatChannel).filter_by(
         channel_type=ChatChannelType.GENERAL.value
     ).first()
+    
+    # Create dictionary representation of general_channel with all needed attributes
+    general_channel = None
+    if general_channel_obj:
+        general_channel = {
+            'id': general_channel_obj.id,
+            'name': general_channel_obj.name,
+            'channel_type': general_channel_obj.channel_type,
+            'station_id': general_channel_obj.station_id
+        }
     
     user_stations = []
     if current_user.is_admin:
@@ -2084,19 +2474,93 @@ def view_chat_channel(channel_id):
         for station in stations:
             user_stations.append(station.id)
     
-    # Get station chat channels for user's stations
-    station_channels = db_session.query(ChatChannel).filter(
+    # Get station chat channels for user's stations and convert to dictionaries to prevent DetachedInstanceError
+    station_channels_query = db_session.query(ChatChannel).filter(
         ChatChannel.station_id.in_(user_stations),
         ChatChannel.channel_type == ChatChannelType.STATION.value
+    )
+    
+    # Convert to a list of dictionaries
+    station_channels = []
+    for channel in station_channels_query:
+        station_channels.append({
+            'id': channel.id,
+            'name': channel.name,
+            'channel_type': channel.channel_type,
+            'station_id': channel.station_id
+        })
+    
+    # Get direct message channels
+    direct_channels = []
+    
+    # Query direct message channels where the current user is user1 or user2
+    dm_channels = db_session.query(ChatChannel, DirectMessageChannel).join(
+        DirectMessageChannel, ChatChannel.id == DirectMessageChannel.channel_id
+    ).filter(
+        or_(
+            DirectMessageChannel.user1_id == current_user.id,
+            DirectMessageChannel.user2_id == current_user.id
+        ),
+        ChatChannel.channel_type == ChatChannelType.DIRECT.value
     ).all()
+    
+    # For each direct message channel, get information about the other user
+    for dm_channel, dm_link in dm_channels:
+        # Determine the other user in the conversation
+        other_user_id = dm_link.user2_id if dm_link.user1_id == current_user.id else dm_link.user1_id
+        other_user_info = db_session.query(User).get(other_user_id)
+        
+        if other_user_info:
+            # Convert other_user to a simple dictionary to prevent DetachedInstanceError
+            other_user_dict = {
+                'id': other_user_info.id,
+                'username': other_user_info.username,
+                'email': other_user_info.email
+            }
+            
+            direct_channels.append({
+                'id': dm_channel.id,
+                'name': f"Chat with {other_user_info.username}",
+                'other_user': other_user_dict
+            })
+    
+    # Commit changes to mark messages as read
+    db_session.commit()
+    
+    # Create a simple dictionary with channel data to prevent DetachedInstanceError
+    # This ensures we don't try to access ORM object attributes after session is closed
+    channel_dict = {
+        'id': channel.id,
+        'name': channel.name,
+        'channel_type': channel.channel_type,
+        'station_id': channel.station_id if hasattr(channel, 'station_id') else None
+    }
+    
+    # For station channels, include station name
+    if channel.channel_type == ChatChannelType.STATION.value and channel.station:
+        channel_dict['station'] = {
+            'id': channel.station.id,
+            'name': channel.station.name
+        }
+    
+    # Convert other_user to dictionary if it exists
+    other_user_dict = None
+    if other_user:
+        other_user_dict = {
+            'id': other_user.id,
+            'username': other_user.username,
+            'email': other_user.email
+        }
     
     db_session.close()
     
     return render_template('chat_channel.html',
-                          channel=channel,
-                          messages=messages,
+                          channel=channel_dict,
+                          messages=messages_dict,
                           general_channel=general_channel,
                           station_channels=station_channels,
+                          direct_channels=direct_channels,
+                          other_user=other_user_dict,
                           current_channel_id=channel_id)
 
 @app.route('/chat/channel/<int:channel_id>/send', methods=['POST'])
@@ -2105,15 +2569,18 @@ def send_chat_message(channel_id):
     """Send a message to a chat channel"""
     db_session = get_session(engine)
     
-    # Get the channel
-    channel = db_session.query(ChatChannel).get(channel_id)
+    # Get the channel with eagerly loaded station relationship and direct message link
+    channel = db_session.query(ChatChannel).options(
+        joinedload(ChatChannel.station),
+        joinedload(ChatChannel.direct_message_link)
+    ).get(channel_id)
     
     if not channel:
         db_session.close()
         flash('Chat channel not found', 'danger')
         return redirect(url_for('chat_dashboard'))
     
-    # Check permissions for station channels
+    # Check permissions for different channel types
     if channel.channel_type == ChatChannelType.STATION.value:
         # If this is a station channel, check if user is in the station
         if not current_user.is_admin:
@@ -2126,6 +2593,14 @@ def send_chat_message(channel_id):
                 db_session.close()
                 flash('You do not have access to this chat channel', 'danger')
                 return redirect(url_for('chat_dashboard'))
+    elif channel.channel_type == ChatChannelType.DIRECT.value:
+        # If this is a direct message channel, check if user is one of the participants
+        dm_link = channel.direct_message_link
+        
+        if not dm_link or (dm_link.user1_id != current_user.id and dm_link.user2_id != current_user.id):
+            db_session.close()
+            flash('You do not have access to this direct message channel', 'danger')
+            return redirect(url_for('chat_dashboard'))
     
     # Get message content from form
     content = request.form.get('message')
@@ -2143,6 +2618,48 @@ def send_chat_message(channel_id):
     )
     
     db_session.add(message)
+    db_session.flush()  # To get the message ID
+    
+    # Mark the message as read for the sender
+    sender_read_status = ChatMessageReadStatus(
+        message_id=message.id,
+        user_id=current_user.id,
+        is_read=True,
+        read_at=datetime.datetime.utcnow()
+    )
+    db_session.add(sender_read_status)
+    
+    # For direct messages, we need to create unread statuses for the other user
+    if channel.channel_type == ChatChannelType.DIRECT.value and channel.direct_message_link:
+        dm_link = channel.direct_message_link
+        other_user_id = dm_link.user2_id if dm_link.user1_id == current_user.id else dm_link.user1_id
+        
+        # Update the direct message channel's last activity timestamp
+        dm_link.last_activity = datetime.datetime.utcnow()
+        
+        # Create a notification for the other user
+        notification = Notification(
+            user_id=other_user_id,
+            title="New Direct Message",
+            message=f"You have received a new direct message from {current_user.username}",
+            notification_type="direct_message"
+        )
+        db_session.add(notification)
+    
+    # For station channels, create unread statuses for other users in the station
+    elif channel.channel_type == ChatChannelType.STATION.value and channel.station_id:
+        # Get all users in this station except the sender
+        station_users = db_session.query(User).join(
+            StationUser, User.id == StationUser.user_id
+        ).filter(
+            StationUser.station_id == channel.station_id,
+            User.id != current_user.id
+        ).all()
+        
+        # No need to create notifications for station messages, just unread statuses
+    
+    # For general channel, no need to create notifications, just unread statuses
+    
     db_session.commit()
     db_session.close()
     
@@ -2154,14 +2671,17 @@ def get_chat_messages(channel_id):
     """API to get messages for a channel (for polling updates)"""
     db_session = get_session(engine)
     
-    # Get the channel
-    channel = db_session.query(ChatChannel).get(channel_id)
+    # Get the channel with eagerly loaded station relationship
+    channel = db_session.query(ChatChannel).options(
+        joinedload(ChatChannel.station),
+        joinedload(ChatChannel.direct_message_link)
+    ).get(channel_id)
     
     if not channel:
         db_session.close()
         return jsonify({'error': 'Channel not found'}), 404
     
-    # Check permissions for station channels
+    # Check permissions for different channel types
     if channel.channel_type == ChatChannelType.STATION.value:
         # If this is a station channel, check if user is in the station
         if not current_user.is_admin:
@@ -2173,12 +2693,23 @@ def get_chat_messages(channel_id):
             if not station_user:
                 db_session.close()
                 return jsonify({'error': 'Access denied'}), 403
+    elif channel.channel_type == ChatChannelType.DIRECT.value:
+        # If this is a direct message channel, check if user is one of the participants
+        dm_link = db_session.query(DirectMessageChannel).filter_by(
+            channel_id=channel.id
+        ).first()
+        
+        if not dm_link or (dm_link.user1_id != current_user.id and dm_link.user2_id != current_user.id):
+            db_session.close()
+            return jsonify({'error': 'Access denied'}), 403
     
     # Get timestamp for last message shown (for polling)
     last_timestamp = request.args.get('last_timestamp')
     
-    # Query for messages
-    query = db_session.query(ChatMessage).filter(
+    # Query for messages with eagerly loaded sender relationship
+    query = db_session.query(ChatMessage).options(
+        joinedload(ChatMessage.sender)
+    ).filter(
         ChatMessage.channel_id == channel.id
     )
     
@@ -2196,32 +2727,93 @@ def get_chat_messages(channel_id):
     # Format messages for JSON response
     message_list = []
     for message in messages:
+        # Safely get sender username
+        sender_username = "System"
+        if not message.is_system_message and message.sender:
+            try:
+                sender_username = message.sender.username
+            except Exception as e:
+                print(f"Error getting sender username: {e}")
+                sender_username = "Unknown"
+        
         message_list.append({
             'id': message.id,
             'sender_id': message.sender_id,
-            'sender_name': message.sender.username if not message.is_system_message else "System",
+            'sender_name': sender_username,
             'content': message.content,
             'created_at': message.created_at.isoformat(),
             'is_system': message.is_system_message,
             'is_own': message.sender_id == current_user.id
         })
+        
+        # Mark the message as read if it's not from the current user
+        if message.sender_id != current_user.id:
+            # Check if there's already a read status
+            read_status = db_session.query(ChatMessageReadStatus).filter_by(
+                message_id=message.id,
+                user_id=current_user.id
+            ).first()
+            
+            if read_status:
+                # Update existing status if not already read
+                if not read_status.is_read:
+                    read_status.is_read = True
+                    read_status.read_at = datetime.datetime.utcnow()
+            else:
+                # Create a new read status
+                new_status = ChatMessageReadStatus(
+                    message_id=message.id,
+                    user_id=current_user.id,
+                    is_read=True,
+                    read_at=datetime.datetime.utcnow()
+                )
+                db_session.add(new_status)
     
+    # Commit changes to mark messages as read
+    db_session.commit()
     db_session.close()
     
     return jsonify({'messages': message_list})
 
 @app.context_processor
-def inject_unread_notifications_count():
-    """Inject unread notifications count into all templates"""
+def inject_unread_counts():
+    """Inject unread counts into all templates"""
     if current_user.is_authenticated:
         db_session = get_session(engine)
-        count = db_session.query(Notification).filter_by(
+        
+        # Get unread notifications count
+        notification_count = db_session.query(Notification).filter_by(
             user_id=current_user.id,
             is_read=False
         ).count()
+        
+        # Get unread chat messages count
+        chat_count = db_session.query(ChatMessage).join(
+            ChatMessageReadStatus, 
+            and_(
+                ChatMessageReadStatus.message_id == ChatMessage.id,
+                ChatMessageReadStatus.user_id == current_user.id,
+                ChatMessageReadStatus.is_read == False
+            ),
+            isouter=True
+        ).filter(
+            ChatMessage.sender_id != current_user.id,
+            ChatMessageReadStatus.id == None
+        ).count()
+        
         db_session.close()
-        return {'unread_notifications_count': count}
-    return {'unread_notifications_count': 0}
+        
+        return {
+            'unread_notifications_count': notification_count,
+            'unread_chat_count': chat_count,
+            'total_unread_count': notification_count + chat_count
+        }
+    
+    return {
+        'unread_notifications_count': 0,
+        'unread_chat_count': 0,
+        'total_unread_count': 0
+    }
 
 if __name__ == '__main__':
     app.run(debug=True, port=6789)

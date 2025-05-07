@@ -6,6 +6,7 @@ import datetime
 # Add parent directory to path to import from database.models
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database.models import init_db, get_session, ChatChannel, ChatChannelType, Station
+from database.models import Base, DirectMessageChannel, ChatMessageReadStatus
 
 def migrate_database():
     """
@@ -57,6 +58,27 @@ def migrate_database():
                 )
                 db_session.add(station_channel)
                 print(f"Created chat channel for station: {station.name}")
+        
+        # Check if the direct_message_channels table exists
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='direct_message_channels'")
+        dm_table_exists = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not dm_table_exists:
+            print("Creating new tables for direct messaging and chat notifications...")
+            
+            # Create the direct_message_channels table
+            DirectMessageChannel.__table__.create(engine, checkfirst=True)
+            print("Created direct_message_channels table")
+            
+            # Create the chat_message_read_statuses table
+            ChatMessageReadStatus.__table__.create(engine, checkfirst=True)
+            print("Created chat_message_read_statuses table")
+            
+            print("Direct messaging migration completed successfully")
         
         db_session.commit()
         print("Chat system migration completed successfully")
